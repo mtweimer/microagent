@@ -9,6 +9,7 @@ import { StructuredTurnMemory } from "../src/core/memory.js";
 import { InMemoryTranslationCache } from "../src/core/cache.js";
 import { createSessionRefs } from "../src/core/dispatcherPipeline/sessionRefs.js";
 import { NarrativeMemory } from "../src/core/narrativeMemory.js";
+import { buildTranslationCacheKey } from "../src/core/cacheKey.js";
 import type { NarrativeMemoryLike, RetrievalPlan, RetrievedEvidence } from "../src/core/contracts.js";
 
 function makePlan(overrides: Partial<RetrievalPlan> = {}): RetrievalPlan {
@@ -107,4 +108,91 @@ test("retrieval engine gathers and packs evidence with trace", async () => {
   assert.equal(result.plan.query, "review Valeo communications");
   assert.equal(result.trace.gatherers.includes("structured-memory"), true);
   assert.equal(result.packs.answerPack.length > 0 || result.packs.reasoningPack.length > 0, true);
+});
+
+test("cache gatherer uses the real dispatcher cache key path", async () => {
+  const cache = new InMemoryTranslationCache();
+  const key = buildTranslationCacheKey({
+    input: "search my email for invoices",
+    provider: "ollama",
+    model: "llama3.1",
+    composerConfig: {}
+  });
+  cache.set(key, {
+    requestId: "cached-1",
+    status: "ok",
+    message: "Found cached result",
+    finalText: "Found cached result",
+    artifacts: {},
+    memoryRefs: [],
+    trace: {
+      traceId: "t1",
+      requestId: "cached-1",
+      provider: "ollama",
+      model: "llama3.1",
+      translationSource: "cache",
+      schemaVersion: "1.0.0",
+      agent: "cache",
+      cacheHit: true,
+      stageTimingsMs: {},
+      validationErrors: [],
+      executionError: null,
+      timestamp: new Date().toISOString()
+    }
+  });
+
+  const engine = new RetrievalEngine({
+    memory: new StructuredTurnMemory(),
+    cache,
+    getCacheKey: (input) =>
+      buildTranslationCacheKey({
+        input,
+        provider: "ollama",
+        model: "llama3.1",
+        composerConfig: {}
+      }),
+    sessionRefs: createSessionRefs(),
+    retrievalConfig: {}
+  });
+
+  const result = await engine.retrieve({
+    input: "search my email for invoices",
+    routeDecision: {
+      mode: "retrieval",
+      domain: "outlook",
+      actionHint: "search_email",
+      confidence: 1,
+      needsClarification: false,
+      clarificationQuestion: null,
+      unsupportedReason: null
+    }
+  });
+
+  assert.equal(result.selectedEvidence.some((item) => item.sourceType === "cache"), true);
+});
+
+test("retrieval engine can exclude current-turn assistant memory ids", async () => {
+  const memory = new StructuredTurnMemory();
+  memory.addTurn({ role: "user", text: "review valeo", source: "cli" });
+  const assistant = memory.addTurn({
+    role: "assistant",
+    text: JSON.stringify({ status: "ok", message: "assistant_result", artifacts: { action: { agent: "ms.outlook" } } }),
+    source: "ms.outlook"
+  });
+  const engine = new RetrievalEngine({
+    memory,
+    cache: new InMemoryTranslationCache(),
+    sessionRefs: createSessionRefs(),
+    retrievalConfig: {}
+  });
+
+  const result = await engine.retrieve({
+    input: "review valeo",
+    excludeMemoryIds: [assistant.id]
+  });
+
+  assert.equal(
+    result.selectedEvidence.some((item) => item.id === `memory:${String(assistant.id)}`),
+    false
+  );
 });

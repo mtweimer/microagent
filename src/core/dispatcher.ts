@@ -13,6 +13,7 @@ import { deriveRetrievalPlan } from "./retrievalPlan.js";
 import { assembleComposerMessages } from "./promptAssembler.js";
 import { resolveFollowupInput } from "./followupResolver.js";
 import { RetrievalEngine } from "./retrieval/engine/RetrievalEngine.js";
+import { buildTranslationCacheKey } from "./cacheKey.js";
 import {
   createSessionRefs,
   resolveOutlookReadParams,
@@ -145,7 +146,7 @@ export class Dispatcher {
     if (cached && cached.status === "ok") {
       this.sessionRefs = updateSessionRefsFromCached(this.sessionRefs, cached);
       markStart("memory_write_assistant");
-      this.memory.addTurn({ role: "assistant", text: JSON.stringify(cached), source: "cache" });
+      this.memory.addTurn({ role: "assistant", text: cached.finalText ?? cached.message, source: "cache" });
       markEnd("memory_write_assistant");
 
       return {
@@ -460,16 +461,6 @@ export class Dispatcher {
       })
     };
 
-    if (response.status === "ok") {
-      markStart("cache_write");
-      this.cache.set(cacheKey, response);
-      markEnd("cache_write");
-    }
-
-    markStart("memory_write_assistant");
-    this.memory.addTurn({ role: "assistant", text: JSON.stringify(response), source: candidate.id });
-    markEnd("memory_write_assistant");
-
     markStart("compose_prompt");
     const retrieval = await this.buildRetrievalResult({
       input,
@@ -513,6 +504,10 @@ export class Dispatcher {
     }
     response.artifacts.retrieval = retrieval;
 
+    markStart("memory_write_assistant");
+    this.memory.addTurn({ role: "assistant", text: response.finalText ?? response.message, source: candidate.id });
+    markEnd("memory_write_assistant");
+
     if (typed.agent === "ms.outlook" || typed.agent === "ms.calendar" || typed.agent === "ms.teams") {
       this.sessionRefs = updateSessionRefsFromExecution(this.sessionRefs, typed, result);
       response.sessionRefs = { ...this.sessionRefs };
@@ -549,6 +544,12 @@ export class Dispatcher {
       });
     }
 
+    if (response.status === "ok") {
+      markStart("cache_write");
+      this.cache.set(cacheKey, response);
+      markEnd("cache_write");
+    }
+
     response.trace.stageTimingsMs = stageTimingsMs;
     return response;
   }
@@ -583,13 +584,12 @@ export class Dispatcher {
   getCacheKey(input: string): string {
     const provider = this.modelGateway?.getActiveProvider?.() ?? "none";
     const model = this.modelGateway?.getActiveModel?.(provider) ?? "none";
-    const composerVersion = "composer-v6";
-    const fingerprint = JSON.stringify({
-      strategy: this.composerConfig?.strategy ?? "hybrid_fallback",
-      primary: this.composerConfig?.primary ?? null,
-      fallback: this.composerConfig?.fallback ?? null
+    return buildTranslationCacheKey({
+      input,
+      provider,
+      model,
+      composerConfig: this.composerConfig
     });
-    return `${provider}::${model}::${getRegistryVersion()}::${composerVersion}::${fingerprint}::${input}`;
   }
 
   async composeGeneralChatResponse({ input, traceId, stageTimingsMs, markStart, markEnd }: ChatComposeInput): Promise<DispatcherResponse> {
@@ -717,23 +717,26 @@ export class Dispatcher {
     input,
     routeDecision,
     envelope,
-    executionResult
+    executionResult,
+    excludeMemoryIds = []
   }: {
     input: string;
     routeDecision: RouteDecision | null;
     envelope: ActionEnvelope | null;
     executionResult: AgentExecutionResult | null;
+    excludeMemoryIds?: Array<string | number>;
   }): Promise<RetrievalResult> {
     const engine = new RetrievalEngine({
       memory: this.memory,
       cache: this.cache,
+      getCacheKey: (query: string) => this.getCacheKey(query),
       sessionRefs: this.sessionRefs,
       entityGraph: this.entityGraph ?? null,
       teamsIndex: this.teamsIndex ?? null,
       narrativeMemory: this.narrativeMemory ?? null,
       retrievalConfig: this.retrievalConfig
     });
-    return engine.retrieve({ input, routeDecision, envelope, executionResult });
+    return engine.retrieve({ input, routeDecision, envelope, executionResult, excludeMemoryIds });
   }
 
   normalizeRetrievalConfig(configuredValue: unknown): AnyRecord {

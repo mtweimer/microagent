@@ -91,6 +91,11 @@ export interface MemoryQueryResult {
   results: MemoryQueryHit[];
 }
 
+export interface MemoryQueryOptions extends AnyRecord {
+  topK?: number;
+  excludeIds?: Array<string | number>;
+}
+
 export interface AgentExecutionContext {
   memory: MemoryStore;
   modelGateway: ModelGatewayLike | null;
@@ -424,7 +429,7 @@ export abstract class MemoryStore {
     throw new Error("MemoryStore.addTurn() not implemented");
   }
 
-  query(_naturalLanguageQuery: string, _options: AnyRecord = {}): MemoryQueryResult {
+  query(_naturalLanguageQuery: string, _options: MemoryQueryOptions = {}): MemoryQueryResult {
     throw new Error("MemoryStore.query() not implemented");
   }
 }

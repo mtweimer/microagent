@@ -349,6 +349,30 @@ test("dispatcher resolves 'what did they want' as latest email follow-up", async
   assert.equal(out.artifacts.result?.id, "msg-followup");
 });
 
+test("dispatcher retrieval excludes current assistant write-back from evidence", async () => {
+  const memory = new StructuredTurnMemory();
+  const graphClient = {
+    async get() {
+      return { value: [] };
+    }
+  };
+  const dispatcher = makeDispatcher({ graphClient, memory });
+
+  const out = await dispatcher.route("search my email for invoices from microsoft");
+  const lastTurn = memory.turns[memory.turns.length - 1];
+
+  assert.equal(out.status, "ok");
+  assert.equal(lastTurn?.role, "assistant");
+  assert.equal(
+    out.retrieval?.selectedEvidence.some((item) => item.snippet.includes("assistant_result")),
+    false
+  );
+  assert.equal(
+    out.retrieval?.selectedEvidence.some((item) => item.snippet.includes("\"requestId\"")),
+    false
+  );
+});
+
 test("dispatcher routes teams retrieval to scaffolded teams agent", async () => {
   const teamsAgent = {
     id: "ms.teams",

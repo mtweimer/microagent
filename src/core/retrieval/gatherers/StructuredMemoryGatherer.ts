@@ -4,9 +4,11 @@ import type { Gatherer } from "./Gatherer.js";
 export class StructuredMemoryGatherer implements Gatherer {
   name = "structured-memory";
   memory: MemoryStore;
+  excludeIds: Array<string | number>;
 
-  constructor(memory: MemoryStore) {
+  constructor(memory: MemoryStore, excludeIds: Array<string | number> = []) {
     this.memory = memory;
+    this.excludeIds = excludeIds;
   }
 
   supports(plan: RetrievalPlan): boolean {
@@ -14,7 +16,10 @@ export class StructuredMemoryGatherer implements Gatherer {
   }
 
   async gather(plan: RetrievalPlan): Promise<RetrievedEvidence[]> {
-    const rows = this.memory.query(plan.query, { topK: Math.max(4, Math.min(12, plan.maxItems)) }).results;
+    const rows = this.memory.query(plan.query, {
+      topK: Math.max(4, Math.min(12, plan.maxItems)),
+      excludeIds: this.excludeIds
+    }).results;
     return rows.map((row: MemoryQueryHit) => ({
       id: `memory:${String(row.id)}`,
       source: this.name,

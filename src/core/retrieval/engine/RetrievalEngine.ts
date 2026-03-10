@@ -29,11 +29,13 @@ interface RetrievalEngineInput {
   routeDecision?: RouteDecision | null;
   envelope?: ActionEnvelope | null;
   executionResult?: AgentExecutionResult | null;
+  excludeMemoryIds?: Array<string | number>;
 }
 
 interface RetrievalEngineDeps {
   memory: MemoryStore;
   cache: TranslationCache;
+  getCacheKey?: ((input: string) => string) | null;
   sessionRefs: SessionRefs;
   entityGraph?: EntityGraphLike | null;
   teamsIndex?: TeamsIndexLike | null;
@@ -58,16 +60,20 @@ export class RetrievalEngine {
     this.packer = new ContextPacker();
   }
 
-  createGatherers(): Gatherer[] {
-    const gatherers: Gatherer[] = [new SessionRefsGatherer(this.deps.sessionRefs), new StructuredMemoryGatherer(this.deps.memory), new CacheGatherer(this.deps.cache)];
+  createGatherers(excludeMemoryIds: Array<string | number> = [], input = ""): Gatherer[] {
+    const gatherers: Gatherer[] = [
+      new SessionRefsGatherer(this.deps.sessionRefs),
+      new StructuredMemoryGatherer(this.deps.memory, excludeMemoryIds),
+      new CacheGatherer(this.deps.cache, this.deps.getCacheKey?.(input) ?? input)
+    ];
     if (this.deps.narrativeMemory) gatherers.push(new NarrativeMemoryGatherer(this.deps.narrativeMemory));
     if (this.deps.teamsIndex) gatherers.push(new TeamsIndexGatherer(this.deps.teamsIndex));
     if (this.deps.entityGraph) gatherers.push(new EntityGraphGatherer(this.deps.entityGraph));
     return gatherers;
   }
 
-  async retrieve({ input, routeDecision, envelope, executionResult }: RetrievalEngineInput): Promise<RetrievalResult> {
-    this.registry = new GathererRegistry(this.createGatherers());
+  async retrieve({ input, routeDecision, envelope, executionResult, excludeMemoryIds = [] }: RetrievalEngineInput): Promise<RetrievalResult> {
+    this.registry = new GathererRegistry(this.createGatherers(excludeMemoryIds, input));
     const plan = this.planner.plan({
       input,
       ...(routeDecision !== undefined ? { routeDecision } : {}),

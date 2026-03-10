@@ -4,9 +4,11 @@ import type { Gatherer } from "./Gatherer.js";
 export class CacheGatherer implements Gatherer {
   name = "cache";
   cache: TranslationCache;
+  cacheKey: string;
 
-  constructor(cache: TranslationCache) {
+  constructor(cache: TranslationCache, cacheKey: string) {
     this.cache = cache;
+    this.cacheKey = cacheKey;
   }
 
   supports(plan: RetrievalPlan): boolean {
@@ -14,7 +16,7 @@ export class CacheGatherer implements Gatherer {
   }
 
   async gather(plan: RetrievalPlan): Promise<RetrievedEvidence[]> {
-    const cached = this.cache.get(plan.query) as DispatcherResponse | null;
+    const cached = this.cache.get(this.cacheKey) as DispatcherResponse | null;
     if (!cached) return [];
     return [
       {
