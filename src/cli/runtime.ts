@@ -272,7 +272,8 @@ export async function buildRuntime(profileName = "default"): Promise<RuntimeStat
       ...conversationConfig.composer,
       budget: conversationConfig.budget,
       quality: conversationConfig.quality
-    }
+    },
+    retrievalConfig: (profile.retrieval ?? {}) as AnyRecord
   });
 
   return {
@@ -1516,6 +1517,20 @@ async function executeDirectAction({
   });
   dispatcher.sessionRefs = updateSessionRefsFromExecution(dispatcher.sessionRefs, envelope, execution);
   entityGraph?.observeExecution(envelope, execution.artifacts ?? {});
+  const retrieval = await dispatcher.buildRetrievalResult({
+    input,
+    routeDecision: {
+      mode: "retrieval",
+      domain: envelope.agent.replace(/^ms\./, ""),
+      actionHint: envelope.action,
+      confidence: 1,
+      needsClarification: false,
+      clarificationQuestion: null,
+      unsupportedReason: null
+    },
+    envelope,
+    executionResult: execution
+  });
 
   const composed = await composeResponse({
     input,
@@ -1526,11 +1541,7 @@ async function executeDirectAction({
     capabilityPack: dispatcher.getCapabilities(),
     modelGateway,
     composerConfig: dispatcher.composerConfig ?? {},
-    memoryEvidence: [],
-    narrativeEntries:
-      typeof narrativeMemory?.summarize === "function"
-        ? (narrativeMemory.summarize("session", 5) as unknown as AnyRecord[])
-        : []
+    retrieval
   });
 
   if (typeof memory?.addTurn === "function") {
@@ -1548,7 +1559,8 @@ async function executeDirectAction({
     artifacts: {
       action: envelope,
       translationSource: "slash",
-      result: execution.artifacts ?? {}
+      result: execution.artifacts ?? {},
+      retrieval
     },
     finalText: composed.finalText,
     conversation: composed.conversation,

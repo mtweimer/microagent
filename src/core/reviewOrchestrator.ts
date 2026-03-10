@@ -4,6 +4,7 @@ import type {
   AnyRecord,
   DispatcherResponse,
   EntityGraphLike,
+  RetrievalResult,
   ReviewFocus,
   SuggestedAction,
   TriageItem
@@ -13,6 +14,12 @@ interface DispatcherLike {
   agents: Array<{ id: string }>;
   sessionRefs: import("./contracts.js").SessionRefs;
   route(prompt: string): Promise<DispatcherResponse>;
+  buildRetrievalResult?: (input: {
+    input: string;
+    routeDecision: import("./contracts.js").RouteDecision | null;
+    envelope: import("./contracts.js").ActionEnvelope | null;
+    executionResult: import("./contracts.js").AgentExecutionResult | null;
+  }) => Promise<RetrievalResult>;
 }
 
 function buildNarrative(
@@ -170,18 +177,52 @@ export async function runReviewOrchestrator({
     target: focus?.name ? `${focus.kind}:${focus.name}` : target,
     triageItems
   });
+  const retrievalQuery = focus?.name
+    ? `review ${focus.kind} ${focus.name}`
+    : target === "followups"
+      ? "review followups"
+      : `review ${target}`;
+  const retrieval = dispatcher.buildRetrievalResult
+    ? await dispatcher.buildRetrievalResult({
+        input: retrievalQuery,
+        routeDecision: {
+          mode: "retrieval",
+          domain: focus?.kind ?? null,
+          actionHint: "review",
+          confidence: 1,
+          needsClarification: false,
+          clarificationQuestion: null,
+          unsupportedReason: null
+        },
+        envelope: null,
+        executionResult: null
+      })
+    : null;
   return {
     requestId: `review-${Date.now()}`,
     status: outputs.some((output) => output.status === "error") ? "error" : "ok",
     message: "Review completed.",
     finalText: buildNarrative(target, triageItems, outputs, focus),
     suggestedActions: [...reviewSuggestions, ...suggestions],
-    evidence: outputs.flatMap((output) => output.evidence ?? []).slice(0, 8),
+    evidence:
+      retrieval?.selectedEvidence.slice(0, 8).map((item) => ({
+        id: item.id,
+        type: item.sourceType,
+        source: item.source,
+        label: item.title ?? item.snippet.slice(0, 80),
+        details: {
+          snippet: item.snippet,
+          timestamp: item.timestamp ?? null,
+          provenance: item.provenance ?? {}
+        }
+      })) ??
+      outputs.flatMap((output) => output.evidence ?? []).slice(0, 8),
     artifacts: {
       reviewTarget: target,
       reviewFocus: focus,
       items: outputs,
-      triageItems
+      triageItems,
+      retrieval
     },
     conversationMode: "review",
     memoryRefs: [],

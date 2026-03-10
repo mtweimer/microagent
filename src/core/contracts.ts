@@ -7,6 +7,17 @@ export type RiskLevel = "low" | "medium" | "high";
 export type ExecutionStatus = "ok" | "error" | "clarify" | "unsupported";
 export type ConversationMode = "chat" | "action_result" | "clarify" | "review";
 export type RouteMode = "action" | "retrieval" | "chat" | "clarify" | "unsupported";
+export type RetrievalIntent = "exact" | "lookup" | "contextual" | "exploratory" | "comparative" | "timeline";
+export type RetrievalSourceType =
+  | "turn-memory"
+  | "session-memory"
+  | "structured-memory"
+  | "narrative-memory"
+  | "teams-index"
+  | "entity-graph"
+  | "graph-api"
+  | "cache"
+  | "session-ref";
 
 export interface ActionInputSchema {
   required: readonly string[];
@@ -136,6 +147,66 @@ export interface EvidenceItem {
   details: AnyRecord;
 }
 
+export interface RetrievedEvidence {
+  id: string;
+  source: string;
+  sourceType: RetrievalSourceType;
+  title?: string;
+  snippet: string;
+  raw?: unknown;
+  score?: number;
+  confidence?: number;
+  recency?: number;
+  tokenCostEstimate?: number;
+  entityRefs?: string[];
+  parentRefs?: string[];
+  timestamp?: string;
+  provenance?: {
+    locator?: string;
+    externalId?: string;
+    query?: string;
+    gatheredBy?: string;
+  };
+}
+
+export interface RetrievalPlan {
+  intent: RetrievalIntent;
+  query: string;
+  entities: string[];
+  sources: string[];
+  traversalMode?: "none" | "drill-down" | "drill-out" | "fan-out";
+  maxItems: number;
+  maxDepth: number;
+  tokenBudget: number;
+  domain?: string | null;
+  action?: string | null;
+  constraints?: AnyRecord;
+}
+
+export interface PackedRetrievalContext {
+  answerPack: RetrievedEvidence[];
+  reasoningPack: RetrievedEvidence[];
+  followupPack: RetrievedEvidence[];
+}
+
+export interface RetrievalTrace {
+  gatherers: string[];
+  latencyMsByGatherer: Record<string, number>;
+  countsBySource: Record<string, number>;
+  selectedIds: string[];
+  overflowIds: string[];
+  tokenContributionBySource: Record<string, number>;
+  scoreBreakdownById: Record<string, AnyRecord>;
+}
+
+export interface RetrievalResult {
+  plan: RetrievalPlan;
+  selectedEvidence: RetrievedEvidence[];
+  overflowEvidence: RetrievedEvidence[];
+  packs: PackedRetrievalContext;
+  trace: RetrievalTrace;
+}
+
 export interface SuggestedAction {
   id: string;
   title: string;
@@ -167,6 +238,7 @@ export interface ComposerResult {
   conversationMode: ConversationMode;
   memoryRefs: Array<string | number>;
   composer: AnyRecord;
+  retrieval?: RetrievalResult | null;
 }
 
 export interface DispatcherArtifacts extends AnyRecord {
@@ -190,6 +262,7 @@ export interface DispatcherResponse {
   router?: RouteDecision;
   capabilityGrounded?: boolean;
   retrievalPlan?: AnyRecord | null;
+  retrieval?: RetrievalResult | null;
   sessionRefs?: SessionRefs;
 }
 
@@ -276,6 +349,16 @@ export interface TeamsIndexLike {
 export interface EntityGraphLike {
   observeExecution?(envelope: ActionEnvelope, artifacts: AnyRecord): void;
   aliasesFor?(name: string): string[];
+  lookup?(name: string, limit?: number): {
+    query: string;
+    entities: Array<{
+      entityId: number;
+      name: string;
+      entityType: string;
+      confidence: number;
+      mentions: AnyRecord[];
+    }>;
+  };
 }
 
 export interface NarrativeMemoryLike {
@@ -303,6 +386,7 @@ export interface DispatcherDeps {
   personaOverlayManager?: PersonaOverlayManagerLike | null;
   cacheConfig?: AnyRecord;
   composerConfig?: AnyRecord;
+  retrievalConfig?: AnyRecord;
 }
 
 export abstract class ModelProvider {

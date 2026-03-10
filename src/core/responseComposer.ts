@@ -10,8 +10,8 @@ import type {
   ComposerResult,
   ConversationBlock,
   EvidenceItem,
-  MemoryQueryHit,
   ModelGatewayLike,
+  RetrievalResult,
   RiskLevel,
   SuggestedAction
 } from "./contracts.js";
@@ -31,6 +31,7 @@ interface BuildDeterministicResponseInput {
   modelGateway: ModelGatewayLike | null;
   source: string;
   errors?: string[];
+  retrieval?: RetrievalResult | null;
 }
 
 interface TextBuildInput {
@@ -45,8 +46,9 @@ interface ChatComposeInput {
   modelGateway: ModelGatewayLike;
   personaContext?: PersonaContext | null | undefined;
   capabilityPack: CapabilityPack;
-  memoryEvidence: MemoryQueryHit[];
-  narrativeEntries: AnyRecord[];
+  retrieval?: RetrievalResult | null;
+  memoryEvidence?: AnyRecord[];
+  narrativeEntries?: AnyRecord[];
   composerConfig?: AnyRecord;
 }
 
@@ -59,7 +61,8 @@ interface ComposeResponseInput {
   capabilityPack: CapabilityPack;
   modelGateway: ModelGatewayLike | null;
   composerConfig?: AnyRecord;
-  memoryEvidence?: MemoryQueryHit[];
+  retrieval?: RetrievalResult | null;
+  memoryEvidence?: AnyRecord[];
   narrativeEntries?: AnyRecord[];
 }
 
@@ -77,6 +80,57 @@ function asLooseRecord(value: unknown): Loose {
   return typeof value === "object" && value !== null ? value : {};
 }
 
+function coerceLegacyRetrieval(
+  retrieval: RetrievalResult | null,
+  memoryEvidence: AnyRecord[],
+  narrativeEntries: AnyRecord[]
+): RetrievalResult | null {
+  if (retrieval) return retrieval;
+  if (memoryEvidence.length === 0 && narrativeEntries.length === 0) return null;
+  return {
+    plan: {
+      intent: "contextual",
+      query: "",
+      entities: [],
+      sources: ["structured-memory", "narrative-memory"],
+      traversalMode: "none",
+      maxItems: 8,
+      maxDepth: 1,
+      tokenBudget: 1200
+    },
+    selectedEvidence: [],
+    overflowEvidence: [],
+    packs: {
+      answerPack: memoryEvidence.map((row, index) => ({
+        id: `legacy-memory:${index}`,
+        source: "legacy",
+        sourceType: "structured-memory",
+        title: typeof row.role === "string" ? `${row.role} turn` : "memory",
+        snippet: String(row.text ?? row.summary ?? ""),
+        raw: row
+      })),
+      reasoningPack: narrativeEntries.map((row, index) => ({
+        id: `legacy-narrative:${index}`,
+        source: "legacy",
+        sourceType: "narrative-memory",
+        title: typeof row.kind === "string" ? row.kind : "narrative",
+        snippet: String(row.text ?? row.summary ?? ""),
+        raw: row
+      })),
+      followupPack: []
+    },
+    trace: {
+      gatherers: ["legacy"],
+      latencyMsByGatherer: {},
+      countsBySource: {},
+      selectedIds: [],
+      overflowIds: [],
+      tokenContributionBySource: {},
+      scoreBreakdownById: {}
+    }
+  };
+}
+
 export async function composeResponse({
   input,
   actionEnvelope,
@@ -86,9 +140,11 @@ export async function composeResponse({
   capabilityPack,
   modelGateway,
   composerConfig = {},
+  retrieval = null,
   memoryEvidence = [],
   narrativeEntries = []
 }: ComposeResponseInput): Promise<ComposerResult> {
+  const retrievalContext = coerceLegacyRetrieval(retrieval, memoryEvidence, narrativeEntries);
   const isChat = !actionEnvelope;
   const deterministicSuggestions = suggestNextActions(actionEnvelope, executionResult);
   const deterministicText = buildConversationalText({
@@ -110,7 +166,8 @@ export async function composeResponse({
       isChat: false,
       memoryRefs,
       modelGateway,
-      source: "template_teams"
+      source: "template_teams",
+      retrieval: retrievalContext
     });
   }
 
@@ -127,7 +184,8 @@ export async function composeResponse({
       isChat,
       memoryRefs,
       modelGateway,
-      source: "template_disabled"
+      source: "template_disabled",
+      retrieval: retrievalContext
     });
   }
 
@@ -137,6 +195,7 @@ export async function composeResponse({
       modelGateway,
       personaContext,
       capabilityPack,
+      retrieval: retrievalContext,
       memoryEvidence,
       narrativeEntries,
       composerConfig
@@ -149,7 +208,8 @@ export async function composeResponse({
       isChat: true,
       memoryRefs,
       modelGateway,
-      source: chatText ? "llm_chat" : "template_chat_fallback"
+      source: chatText ? "llm_chat" : "template_chat_fallback",
+      retrieval: retrievalContext
     });
   }
 
@@ -159,6 +219,7 @@ export async function composeResponse({
     executionResult,
     personaContext,
     capabilityPack,
+    retrieval: retrievalContext,
     memoryEvidence,
     narrativeEntries,
     budget: composerConfig?.budget ?? {}
@@ -204,7 +265,8 @@ export async function composeResponse({
       memoryRefs,
       modelGateway,
       source: "template_fallback",
-      errors: composed.errors
+      errors: composed.errors,
+      retrieval: retrievalContext
     });
   }
 
@@ -242,7 +304,8 @@ export async function composeResponse({
       provider: modelGateway?.getActiveProvider?.() ?? "none",
       model: modelGateway?.getActiveModel?.() ?? "none",
       source: `llm_${composed.used}`
-    }
+    },
+    retrieval: retrievalContext
   };
 }
 
@@ -255,7 +318,8 @@ function buildDeterministicResponse({
   memoryRefs,
   modelGateway,
   source,
-  errors = []
+  errors = [],
+  retrieval = null
 }: BuildDeterministicResponseInput): ComposerResult {
   const evidence = isChat ? [] : buildDeterministicEvidence(actionEnvelope, executionResult);
   return {
@@ -276,7 +340,8 @@ function buildDeterministicResponse({
       model: modelGateway?.getActiveModel?.() ?? "none",
       source,
       errors
-    }
+    },
+    retrieval
   };
 }
 
@@ -883,8 +948,7 @@ async function composeChatText({
   modelGateway,
   personaContext,
   capabilityPack,
-  memoryEvidence,
-  narrativeEntries,
+  retrieval,
   composerConfig
 }: ChatComposeInput): Promise<string | null> {
   try {
@@ -900,8 +964,7 @@ async function composeChatText({
       input,
       personaContext,
       capabilityPack,
-      memoryEvidence,
-      narrativeEntries,
+      ...(retrieval !== undefined ? { retrieval } : {}),
       budget: composerConfig?.budget ?? {}
     });
     const text = (await modelGateway.completeText(messages, { provider, model })).trim();

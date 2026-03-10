@@ -28,6 +28,7 @@
     "build": "tsx scripts/build.ts",
     "update": "npm install && npm run build",
     "bench": "tsx scripts/run-bench.ts",
+    "retrieval:bench": "tsx scripts/run-retrieval-bench.ts",
     "prompt:test": "tsx scripts/run-prompt-tests.ts",
     "routing:test": "tsx scripts/run-routing-regression.ts",
     "typecheck": "tsc --noEmit",
