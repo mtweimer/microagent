@@ -200,6 +200,7 @@ export interface RetrievalTrace {
   countsBySource: Record<string, number>;
   selectedIds: string[];
   overflowIds: string[];
+  selectionReasonById: Record<string, string>;
   tokenContributionBySource: Record<string, number>;
   scoreBreakdownById: Record<string, AnyRecord>;
 }

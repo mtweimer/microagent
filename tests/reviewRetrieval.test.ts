@@ -75,6 +75,7 @@ test("review orchestrator prefers retrieval-backed evidence when available", asy
           countsBySource: { "structured-memory": 1 },
           selectedIds: ["retrieval-1"],
           overflowIds: [],
+          selectionReasonById: { "retrieval-1": "selected:within_budget" },
           tokenContributionBySource: { "structured-memory": 20 },
           scoreBreakdownById: {}
         }

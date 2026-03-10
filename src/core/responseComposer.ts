@@ -125,6 +125,7 @@ function coerceLegacyRetrieval(
       countsBySource: {},
       selectedIds: [],
       overflowIds: [],
+      selectionReasonById: {},
       tokenContributionBySource: {},
       scoreBreakdownById: {}
     }

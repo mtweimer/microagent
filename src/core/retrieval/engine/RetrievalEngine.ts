@@ -85,7 +85,7 @@ export class RetrievalEngine {
     });
     const { evidence, latencyMsByGatherer } = await this.registry.gatherAll(plan);
     const { ranked, scoreBreakdownById } = this.ranker.rank(plan, evidence);
-    const diverse = this.diversityPolicy.apply(ranked);
+    const diverse = this.diversityPolicy.apply(plan, ranked);
     const countsBySource = diverse.reduce<Record<string, number>>((acc, row) => {
       acc[row.sourceType] = (acc[row.sourceType] ?? 0) + 1;
       return acc;
