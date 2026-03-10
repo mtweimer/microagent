@@ -1,0 +1,10 @@
+{
+  "agentId": "ms.sharepoint",
+  "domain": "sharepoint",
+  "actions": [
+    "search_documents"
+  ],
+  "requiredScopes": [
+    "Sites.Read.All"
+  ]
+}

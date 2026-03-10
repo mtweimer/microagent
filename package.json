@@ -1,0 +1,30 @@
+{
+  "name": "micro-claw",
+  "version": "0.4.0",
+  "private": true,
+  "type": "module",
+  "description": "Minimal personal assistant agent scaffold inspired by Microsoft TypeAgent.",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "microclaw": "./scripts/microclaw",
+    "micro-claw": "./scripts/microclaw"
+  },
+  "scripts": {
+    "start": "node src/cli.js run",
+    "run": "node src/cli.js run",
+    "doctor": "node src/cli.js doctor",
+    "check": "node src/cli.js check",
+    "profile:list": "node src/cli.js profile list",
+    "profile:show": "node src/cli.js profile show --profile default",
+    "profile:validate": "node src/cli.js profile validate --profile default",
+    "schema:generate": "node scripts/generate-agent-schemas.js",
+    "schema:check": "node scripts/schema-check.js",
+    "plugins:validate": "node src/cli.js plugins validate --profile default",
+    "test": "node --test tests/*.test.js",
+    "bench": "node scripts/run-bench.js",
+    "prompt:test": "node scripts/run-prompt-tests.js",
+    "routing:test": "node scripts/run-routing-regression.js"
+  }
+}

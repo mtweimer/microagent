@@ -1,0 +1,14 @@
+{
+  "agentId": "ms.outlook",
+  "domain": "outlook",
+  "actions": [
+    "search_email",
+    "send_email",
+    "list_recent_emails",
+    "read_email"
+  ],
+  "requiredScopes": [
+    "Mail.Read",
+    "Mail.Send"
+  ]
+}

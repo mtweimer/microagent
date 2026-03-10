@@ -1,0 +1,11 @@
+{
+  "agentId": "ms.calendar",
+  "domain": "calendar",
+  "actions": [
+    "schedule_event",
+    "find_events"
+  ],
+  "requiredScopes": [
+    "Calendars.ReadWrite"
+  ]
+}

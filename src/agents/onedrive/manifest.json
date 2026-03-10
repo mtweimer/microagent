@@ -1,0 +1,10 @@
+{
+  "agentId": "ms.onedrive",
+  "domain": "onedrive",
+  "actions": [
+    "search_files"
+  ],
+  "requiredScopes": [
+    "Files.Read"
+  ]
+}

@@ -1,0 +1,52 @@
+{
+  "name": "smoke",
+  "cases": [
+    {
+      "id": "calendar_schedule_tomorrow",
+      "risk": "medium",
+      "input": "schedule a project sync tomorrow at 3pm",
+      "expect": {
+        "status": "ok",
+        "agent": "ms.calendar",
+        "action": "schedule_event"
+      }
+    },
+    {
+      "id": "calendar_today",
+      "risk": "low",
+      "input": "what's on my calendar for today",
+      "expect": {
+        "status": "ok",
+        "agent": "ms.calendar",
+        "action": "find_events"
+      }
+    },
+    {
+      "id": "outlook_search",
+      "risk": "low",
+      "input": "search my email for invoices from microsoft",
+      "expect": {
+        "status": "ok",
+        "agent": "ms.outlook",
+        "action": "search_email"
+      }
+    },
+    {
+      "id": "memory_statement_no_send",
+      "risk": "low",
+      "input": "Kevin sent email to Satya about new AI models.",
+      "expect": {
+        "status": "ok",
+        "messageIncludes": "saved that context"
+      }
+    },
+    {
+      "id": "ambiguous_clarify",
+      "risk": "low",
+      "input": "set something up for me later",
+      "expect": {
+        "status": "clarify"
+      }
+    }
+  ]
+}

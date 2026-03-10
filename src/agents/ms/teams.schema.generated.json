@@ -1,0 +1,81 @@
+{
+  "generatedFrom": "src/contracts/actionRegistry.js",
+  "registryVersion": "1.0.0",
+  "domain": "teams",
+  "agentId": "ms.teams",
+  "requiredScopes": [
+    "Chat.Read"
+  ],
+  "actions": {
+    "review_my_day": {
+      "schemaVersion": "1.0.0",
+      "inputSchema": {
+        "required": [],
+        "properties": {
+          "top": "number",
+          "surface": "string",
+          "window": "string",
+          "depth": "string"
+        }
+      },
+      "translatorHints": "Review my recent Teams activity and summarize priority items.",
+      "executorCapabilities": {
+        "dryRun": true,
+        "requiresConfirmation": false
+      }
+    },
+    "search_mentions": {
+      "schemaVersion": "1.0.0",
+      "inputSchema": {
+        "required": [],
+        "properties": {
+          "top": "number",
+          "surface": "string",
+          "window": "string",
+          "depth": "string"
+        }
+      },
+      "translatorHints": "Find recent Teams messages likely directed to me (mentions or direct asks).",
+      "executorCapabilities": {
+        "dryRun": true,
+        "requiresConfirmation": false
+      }
+    },
+    "search_messages": {
+      "schemaVersion": "1.0.0",
+      "inputSchema": {
+        "required": [
+          "query"
+        ],
+        "properties": {
+          "query": "string",
+          "top": "number",
+          "surface": "string",
+          "window": "string",
+          "depth": "string",
+          "team": "string",
+          "channel": "string"
+        }
+      },
+      "translatorHints": "Search Teams messages.",
+      "executorCapabilities": {
+        "dryRun": true,
+        "requiresConfirmation": false
+      }
+    },
+    "read_message": {
+      "schemaVersion": "1.0.0",
+      "inputSchema": {
+        "required": [],
+        "properties": {
+          "id": "string"
+        }
+      },
+      "translatorHints": "Read a specific Teams message by id from indexed results or prior context.",
+      "executorCapabilities": {
+        "dryRun": true,
+        "requiresConfirmation": false
+      }
+    }
+  }
+}

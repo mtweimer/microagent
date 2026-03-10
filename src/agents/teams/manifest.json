@@ -1,0 +1,13 @@
+{
+  "agentId": "ms.teams",
+  "domain": "teams",
+  "actions": [
+    "review_my_day",
+    "search_mentions",
+    "search_messages",
+    "read_message"
+  ],
+  "requiredScopes": [
+    "Chat.Read"
+  ]
+}

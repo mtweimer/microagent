@@ -1,0 +1,27 @@
+{
+  "generatedFrom": "src/contracts/actionRegistry.js",
+  "registryVersion": "1.0.0",
+  "domain": "onedrive",
+  "agentId": "ms.onedrive",
+  "requiredScopes": [
+    "Files.Read"
+  ],
+  "actions": {
+    "search_files": {
+      "schemaVersion": "1.0.0",
+      "inputSchema": {
+        "required": [
+          "query"
+        ],
+        "properties": {
+          "query": "string"
+        }
+      },
+      "translatorHints": "Search OneDrive files.",
+      "executorCapabilities": {
+        "dryRun": true,
+        "requiresConfirmation": false
+      }
+    }
+  }
+}

@@ -1,0 +1,17 @@
+[
+  {
+    "id": "calendar_schedule_1",
+    "input": "Schedule a design review next Tuesday at 2pm and invite Alex",
+    "expectedDomain": "calendar"
+  },
+  {
+    "id": "outlook_reply_1",
+    "input": "Reply to Megan's email and say tomorrow works",
+    "expectedDomain": "outlook"
+  },
+  {
+    "id": "teams_lookup_1",
+    "input": "Find yesterday's Teams discussion about release blockers",
+    "expectedDomain": "teams"
+  }
+]

@@ -1,0 +1,78 @@
+{
+  "generatedFrom": "src/contracts/actionRegistry.js",
+  "registryVersion": "1.0.0",
+  "domain": "outlook",
+  "agentId": "ms.outlook",
+  "requiredScopes": [
+    "Mail.Read",
+    "Mail.Send"
+  ],
+  "actions": {
+    "send_email": {
+      "schemaVersion": "1.0.0",
+      "inputSchema": {
+        "required": [
+          "to",
+          "subject",
+          "body"
+        ],
+        "properties": {
+          "to": "array",
+          "subject": "string",
+          "body": "string"
+        }
+      },
+      "translatorHints": "Send or reply to an email using recipient addresses and message content.",
+      "executorCapabilities": {
+        "dryRun": false,
+        "requiresConfirmation": false
+      }
+    },
+    "search_email": {
+      "schemaVersion": "1.0.0",
+      "inputSchema": {
+        "required": [
+          "query"
+        ],
+        "properties": {
+          "query": "string"
+        }
+      },
+      "translatorHints": "Search email messages by natural language query.",
+      "executorCapabilities": {
+        "dryRun": true,
+        "requiresConfirmation": false
+      }
+    },
+    "list_recent_emails": {
+      "schemaVersion": "1.0.0",
+      "inputSchema": {
+        "required": [],
+        "properties": {
+          "limit": "number",
+          "folder": "string"
+        }
+      },
+      "translatorHints": "List the most recent emails, optionally with a limit or folder.",
+      "executorCapabilities": {
+        "dryRun": true,
+        "requiresConfirmation": false
+      }
+    },
+    "read_email": {
+      "schemaVersion": "1.0.0",
+      "inputSchema": {
+        "required": [],
+        "properties": {
+          "id": "string",
+          "reference": "string"
+        }
+      },
+      "translatorHints": "Read a specific email by id or session reference like latest.",
+      "executorCapabilities": {
+        "dryRun": true,
+        "requiresConfirmation": false
+      }
+    }
+  }
+}

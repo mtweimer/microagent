@@ -1,0 +1,98 @@
+{
+  "name": "default",
+  "provider": {
+    "active": "ollama",
+    "models": {
+      "ollama": "llama3.1",
+      "openai": "gpt-4o-mini",
+      "azure-openai": "gpt-4o-mini",
+      "anthropic": "claude-3-5-sonnet-latest"
+    }
+  },
+  "agents": {
+    "enabled": ["dispatcher", "memory", "ms.outlook", "ms.calendar", "ms.teams"],
+    "paths": []
+  },
+  "graph": {
+    "auth": {
+      "mode": "deviceCode"
+    },
+    "scopes": [
+      "User.Read",
+      "Mail.Read",
+      "Mail.Send",
+      "Calendars.ReadWrite",
+      "Calendars.ReadWrite.Shared",
+      "Chat.Read",
+      "Chat.ReadWrite.All",
+      "Channel.Create",
+      "Channel.ReadBasic.All",
+      "ChannelMember.Read.All",
+      "ChannelMember.ReadWrite.All",
+      "ChannelMessage.Edit",
+      "ChannelMessage.Read.All",
+      "ChannelMessage.ReadWrite",
+      "ChannelMessage.Send",
+      "ChannelSettings.Read.All",
+      "Team.Create",
+      "Team.ReadBasic.All",
+      "Sites.ReadWrite.All",
+      "Files.Read.All",
+      "email",
+      "offline_access",
+      "openid",
+      "profile"
+    ]
+  },
+  "memory": {
+    "backend": "sqlite",
+    "dbPath": "./data/memory-default.sqlite"
+  },
+  "cache": {
+    "enabled": true,
+    "grammarSystem": "completionBased"
+  },
+  "safety": {
+    "localToolsPolicy": "read_only",
+    "suggestionPolicy": {
+      "maxAutoApplyRisk": "low"
+    }
+  },
+  "conversation": {
+    "composer": {
+      "enabled": true,
+      "strategy": "hybrid_fallback",
+      "primary": {
+        "provider": "ollama",
+        "model": "active"
+      },
+      "fallback": {
+        "provider": "ollama",
+        "model": "llama3.1"
+      }
+    },
+    "budget": {
+      "baseChars": 1600,
+      "workspaceChars": 1800,
+      "dynamicChars": 2800
+    },
+    "quality": {
+      "minConfidence": 0.55,
+      "retryOnSchemaFail": true,
+      "retryOnLowConfidence": true
+    }
+  },
+  "retrieval": {
+    "teams": {
+      "retentionDays": 3650,
+      "deltaIntervalMs": 600000,
+      "deltaLookbackHours": 6,
+      "ranking": {
+        "automationPenalty": "moderate"
+      }
+    }
+  },
+  "benchmark": {
+    "defaultSuite": "all"
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "generatedFrom": "src/contracts/actionRegistry.js",
+  "registryVersion": "1.0.0",
+  "domain": "calendar",
+  "agentId": "ms.calendar",
+  "requiredScopes": [
+    "Calendars.ReadWrite"
+  ],
+  "actions": {
+    "schedule_event": {
+      "schemaVersion": "1.0.0",
+      "inputSchema": {
+        "required": [
+          "title",
+          "when"
+        ],
+        "properties": {
+          "title": "string",
+          "when": "string",
+          "attendees": "array"
+        }
+      },
+      "translatorHints": "Schedule or create a calendar event with optional attendees.",
+      "executorCapabilities": {
+        "dryRun": false,
+        "requiresConfirmation": false
+      }
+    },
+    "find_events": {
+      "schemaVersion": "1.0.0",
+      "inputSchema": {
+        "required": [
+          "timeRange"
+        ],
+        "properties": {
+          "timeRange": "string"
+        }
+      },
+      "translatorHints": "Find upcoming or time-bounded calendar events.",
+      "executorCapabilities": {
+        "dryRun": true,
+        "requiresConfirmation": false
+      }
+    }
+  }
+}

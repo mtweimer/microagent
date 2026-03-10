@@ -1,0 +1,8 @@
+{
+  "agentId": "local.system",
+  "domain": "local-system",
+  "actions": [
+    "inspect_system"
+  ],
+  "requiredScopes": []
+}

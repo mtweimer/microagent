@@ -1,0 +1,27 @@
+{
+  "generatedFrom": "src/contracts/actionRegistry.js",
+  "registryVersion": "1.0.0",
+  "domain": "sharepoint",
+  "agentId": "ms.sharepoint",
+  "requiredScopes": [
+    "Sites.Read.All"
+  ],
+  "actions": {
+    "search_documents": {
+      "schemaVersion": "1.0.0",
+      "inputSchema": {
+        "required": [
+          "query"
+        ],
+        "properties": {
+          "query": "string"
+        }
+      },
+      "translatorHints": "Search SharePoint documents.",
+      "executorCapabilities": {
+        "dryRun": true,
+        "requiresConfirmation": false
+      }
+    }
+  }
+}

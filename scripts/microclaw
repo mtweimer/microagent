@@ -1,0 +1,127 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export MICRO_CLAW_HOME="$ROOT_DIR"
+PID_DIR="$ROOT_DIR/data"
+PID_FILE="$PID_DIR/microclaw.pid"
+LOG_FILE="$PID_DIR/microclaw.log"
+CMD="${1:-run}"
+mkdir -p "$PID_DIR"
+
+is_running() {
+  if [[ ! -f "$PID_FILE" ]]; then
+    return 1
+  fi
+  local pid
+  pid="$(cat "$PID_FILE" 2>/dev/null || true)"
+  [[ -n "$pid" ]] || return 1
+  kill -0 "$pid" 2>/dev/null
+}
+
+start_daemon() {
+  if is_running; then
+    echo "micro-claw already running (pid $(cat "$PID_FILE"))"
+    return 0
+  fi
+  nohup bash -lc "cd '$ROOT_DIR' && exec node '$ROOT_DIR/src/cli.js' run" >"$LOG_FILE" 2>&1 &
+  local pid=$!
+  echo "$pid" >"$PID_FILE"
+  echo "micro-claw started in daemon mode (pid $pid)"
+  echo "log: $LOG_FILE"
+}
+
+stop_daemon() {
+  if ! is_running; then
+    echo "micro-claw is not running"
+    rm -f "$PID_FILE"
+    return 0
+  fi
+  local pid
+  pid="$(cat "$PID_FILE")"
+  kill "$pid" 2>/dev/null || true
+  for _ in {1..20}; do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      rm -f "$PID_FILE"
+      echo "micro-claw stopped"
+      return 0
+    fi
+    sleep 0.1
+  done
+  kill -9 "$pid" 2>/dev/null || true
+  rm -f "$PID_FILE"
+  echo "micro-claw force-stopped"
+}
+
+show_help() {
+  cat <<'EOF'
+Usage:
+  microclaw run
+  microclaw up
+  microclaw check
+  microclaw build
+  microclaw start [--daemon]
+  microclaw stop
+  microclaw restart [--daemon]
+  microclaw status
+  microclaw logs
+EOF
+}
+
+case "$CMD" in
+  up)
+    shift || true
+    cd "$ROOT_DIR"
+    node "$ROOT_DIR/src/cli.js" doctor "$@"
+    exec node "$ROOT_DIR/src/cli.js" run "$@"
+    ;;
+  check)
+    shift || true
+    cd "$ROOT_DIR"
+    exec node "$ROOT_DIR/src/cli.js" check "$@"
+    ;;
+  build|rebuild)
+    (cd "$ROOT_DIR" && node scripts/build.js)
+    ;;
+  start)
+    shift || true
+    if [[ "${1:-}" == "--daemon" ]]; then
+      start_daemon
+    else
+      cd "$ROOT_DIR"
+      exec node "$ROOT_DIR/src/cli.js" run "$@"
+    fi
+    ;;
+  stop)
+    stop_daemon
+    ;;
+  restart)
+    shift || true
+    stop_daemon
+    if [[ "${1:-}" == "--daemon" ]]; then
+      start_daemon
+    else
+      cd "$ROOT_DIR"
+      exec node "$ROOT_DIR/src/cli.js" run "$@"
+    fi
+    ;;
+  status)
+    if is_running; then
+      echo "running (pid $(cat "$PID_FILE"))"
+      echo "log: $LOG_FILE"
+    else
+      echo "stopped"
+    fi
+    ;;
+  logs)
+    touch "$LOG_FILE"
+    tail -n 100 -f "$LOG_FILE"
+    ;;
+  help|-h|--help)
+    show_help
+    ;;
+  *)
+    cd "$ROOT_DIR"
+    exec node "$ROOT_DIR/src/cli.js" "$@"
+    ;;
+esac

@@ -1,0 +1,11 @@
+[
+  {
+    "id": "memory_recall_books",
+    "turns": [
+      "We discussed Deep Work and Atomic Habits.",
+      "Also add The Pragmatic Programmer to my reading list."
+    ],
+    "query": "What books did we discuss?",
+    "mustContain": ["deep", "atomic", "pragmatic"]
+  }
+]
