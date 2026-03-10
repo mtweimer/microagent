@@ -1,3 +1,5 @@
+import type { PersonaContext } from "./personaContext.js";
+
 export type AnyRecord = Record<string, unknown>;
 
 export type JsonTypeName = "string" | "number" | "boolean" | "array" | "object";
@@ -84,6 +86,7 @@ export interface AgentExecutionContext {
   graphClient: GraphClientLike | null;
   teamsIndex?: TeamsIndexLike | null;
   teamsRankingConfig?: AnyRecord;
+  entityGraph?: EntityGraphLike | null;
 }
 
 export interface AgentExecutionResult {
@@ -266,7 +269,7 @@ export interface GraphClientLike {
 }
 
 export interface TeamsIndexLike {
-  searchMessages?(query: string, options?: AnyRecord): unknown;
+  searchMessages?(options?: AnyRecord): unknown;
   getMessageById?(id: string): unknown;
 }
 
@@ -293,7 +296,7 @@ export interface DispatcherDeps {
   teamsIndex?: TeamsIndexLike | null;
   teamsRankingConfig?: AnyRecord;
   entityGraph?: EntityGraphLike | null;
-  personaContext?: AnyRecord;
+  personaContext?: PersonaContext | null;
   narrativeMemory?: NarrativeMemoryLike | null;
   patternCache?: AnyRecord;
   grammarStore?: AnyRecord;

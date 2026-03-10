@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import { translateRequest } from "./llmTranslator.js";
 import { validateActionEnvelope, getRegistryVersion } from "./schema.js";
-import { detectDomain } from "../contracts/actionRegistry.js";
+import { detectDomain, listDomains, type DomainName } from "../contracts/actionRegistry.js";
 import { createTrace } from "../trace/traceSchema.js";
 import { classifyIntent } from "./intentPolicy.js";
 import { normalizeEnvelopeParams } from "./normalizeParams.js";
@@ -55,6 +55,11 @@ type ChatComposeInput = {
 
 function asRecord(value: unknown): AnyRecord {
   return typeof value === "object" && value !== null ? (value as AnyRecord) : {};
+}
+
+function asDomainName(value: string | null): DomainName | null {
+  if (!value) return null;
+  return listDomains().includes(value as DomainName) ? (value as DomainName) : null;
 }
 
 export class Dispatcher {
@@ -318,7 +323,8 @@ export class Dispatcher {
       }
     }
     if (!translation) {
-      translation = (await translateRequest(input, domain, this.modelGateway)) as TranslationResult;
+      const translationDomain = asDomainName(domain) ?? "outlook";
+      translation = (await translateRequest(input, translationDomain, this.modelGateway)) as TranslationResult;
     }
     markEnd("translate");
 

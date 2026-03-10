@@ -1,4 +1,3 @@
-// @ts-nocheck
 import {
   checkProviderEnv,
   getAvailableModels,
@@ -9,15 +8,32 @@ import {
 
 const DEFAULT_TIMEOUT_MS = 30000;
 
-async function fetchJson(url, init = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
+interface FetchJsonResult {
+  ok: boolean;
+  status: number;
+  data: Record<string, unknown>;
+}
+
+interface ModelMessage {
+  role: string;
+  content: string;
+}
+
+type ProviderName = "ollama" | "openai" | "azure-openai" | "anthropic";
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+}
+
+async function fetchJson(url: string, init: RequestInit = {}, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<FetchJsonResult> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(url, { ...init, signal: controller.signal });
     const text = await res.text();
-    let data = {};
+    let data: Record<string, unknown> = {};
     try {
-      data = text ? JSON.parse(text) : {};
+      data = text ? (JSON.parse(text) as Record<string, unknown>) : {};
     } catch {
       data = { raw: text };
     }
@@ -28,37 +44,39 @@ async function fetchJson(url, init = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
 }
 
 export class ModelGateway {
-  constructor(env = process.env) {
+  env: NodeJS.ProcessEnv;
+
+  constructor(env: NodeJS.ProcessEnv = process.env) {
     this.env = env;
   }
 
-  getActiveProvider() {
+  getActiveProvider(): ProviderName {
     const provider = this.env.MICRO_CLAW_PROVIDER ?? "ollama";
-    return isKnownProvider(provider) ? provider : "ollama";
+    return isKnownProvider(provider) ? (provider as ProviderName) : "ollama";
   }
 
-  setActiveProvider(provider) {
+  setActiveProvider(provider: string): void {
     if (!isKnownProvider(provider)) throw new Error(`Unknown provider: ${provider}`);
     this.env.MICRO_CLAW_PROVIDER = provider;
   }
 
-  getActiveModel(provider = this.getActiveProvider()) {
-    return getProviderModel(provider, this.env);
+  getActiveModel(provider: ProviderName = this.getActiveProvider()): string {
+    return getProviderModel(provider, this.env) ?? "";
   }
 
-  setActiveModel(model, provider = this.getActiveProvider()) {
+  setActiveModel(model: string, provider: ProviderName = this.getActiveProvider()): void {
     setProviderModel(provider, model, this.env);
   }
 
-  async listModels(provider = this.getActiveProvider()) {
+  async listModels(provider: ProviderName = this.getActiveProvider()): Promise<string[]> {
     return getAvailableModels(provider, this.env);
   }
 
-  checkAuth(provider = this.getActiveProvider()) {
+  checkAuth(provider: ProviderName = this.getActiveProvider()) {
     return checkProviderEnv(provider, this.env);
   }
 
-  async healthCheck(provider = this.getActiveProvider()) {
+  async healthCheck(provider: ProviderName = this.getActiveProvider()): Promise<Record<string, unknown>> {
     const auth = this.checkAuth(provider);
 
     if (provider === "ollama") {
@@ -73,7 +91,7 @@ export class ModelGateway {
           model: this.getActiveModel(provider)
         };
       } catch (error) {
-        return { provider, auth, reachable: false, error: String(error.message ?? error) };
+        return { provider, auth, reachable: false, error: String(error instanceof Error ? error.message : error) };
       }
     }
 
@@ -85,8 +103,8 @@ export class ModelGateway {
     };
   }
 
-  async completeText(messages, options = {}) {
-    const provider = options.provider ?? this.getActiveProvider();
+  async completeText(messages: ModelMessage[], options: Record<string, unknown> = {}): Promise<string> {
+    const provider = (options.provider as ProviderName | undefined) ?? this.getActiveProvider();
     const model = options.model ?? this.getActiveModel(provider);
 
     if (provider === "ollama") {
@@ -105,14 +123,14 @@ export class ModelGateway {
     throw new Error(`Unsupported provider: ${provider}`);
   }
 
-  async completeJson(messages, options = {}) {
+  async completeJson(messages: ModelMessage[], options: Record<string, unknown> = {}): Promise<unknown> {
     const text = await this.completeText(messages, options);
     const parsed = tryParseJson(text);
     if (parsed.ok) return parsed.value;
     throw new Error("Model did not return valid JSON");
   }
 
-  async completeOllama(messages, model) {
+  async completeOllama(messages: ModelMessage[], model: unknown): Promise<string> {
     const endpoint = this.env.OLLAMA_ENDPOINT || "http://localhost:11434";
     const r = await fetchJson(`${endpoint}/api/chat`, {
       method: "POST",
@@ -121,10 +139,10 @@ export class ModelGateway {
     });
 
     if (!r.ok) throw new Error(`Ollama error: ${r.status}`);
-    return r.data?.message?.content ?? "";
+    return String(asRecord(asRecord(r.data).message).content ?? "");
   }
 
-  async completeOpenAI(messages, model) {
+  async completeOpenAI(messages: ModelMessage[], model: unknown): Promise<string> {
     const endpoint = this.env.OPENAI_ENDPOINT || "https://api.openai.com/v1/chat/completions";
     const key = this.env.OPENAI_API_KEY;
 
@@ -138,12 +156,15 @@ export class ModelGateway {
     });
 
     if (!r.ok) throw new Error(`OpenAI error: ${r.status}`);
-    return r.data?.choices?.[0]?.message?.content ?? "";
+    const choices = asRecord(r.data).choices;
+    const first = Array.isArray(choices) ? asRecord(choices[0]) : {};
+    return String(asRecord(first.message).content ?? "");
   }
 
-  async completeAzure(messages, _model) {
+  async completeAzure(messages: ModelMessage[], _model: unknown): Promise<string> {
     const endpoint = this.env.AZURE_OPENAI_ENDPOINT;
     const key = this.env.AZURE_OPENAI_API_KEY;
+    if (!endpoint) throw new Error("Azure OpenAI endpoint is not configured");
 
     const r = await fetchJson(endpoint, {
       method: "POST",
@@ -155,10 +176,12 @@ export class ModelGateway {
     });
 
     if (!r.ok) throw new Error(`Azure OpenAI error: ${r.status}`);
-    return r.data?.choices?.[0]?.message?.content ?? "";
+    const choices = asRecord(r.data).choices;
+    const first = Array.isArray(choices) ? asRecord(choices[0]) : {};
+    return String(asRecord(first.message).content ?? "");
   }
 
-  async completeAnthropic(messages, model) {
+  async completeAnthropic(messages: ModelMessage[], model: unknown): Promise<string> {
     const key = this.env.ANTHROPIC_API_KEY;
     const system = messages.find((m) => m.role === "system")?.content ?? "";
     const userParts = messages.filter((m) => m.role !== "system").map((m) => ({
@@ -183,23 +206,23 @@ export class ModelGateway {
 
     if (!r.ok) throw new Error(`Anthropic error: ${r.status}`);
 
-    const content = r.data?.content;
-    if (Array.isArray(content) && content[0]?.type === "text") {
-      return content[0].text;
+    const content = asRecord(r.data).content;
+    if (Array.isArray(content) && asRecord(content[0]).type === "text") {
+      return String(asRecord(content[0]).text ?? "");
     }
 
     return "";
   }
 }
 
-function tryParseJson(text) {
+function tryParseJson(text: string): { ok: true; value: unknown } | { ok: false } {
   try {
     return { ok: true, value: JSON.parse(text) };
   } catch {
     const match = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
     if (match) {
       try {
-        return { ok: true, value: JSON.parse(match[1]) };
+        return { ok: true, value: JSON.parse(match[1] ?? "") };
       } catch {
         return { ok: false };
       }

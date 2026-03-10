@@ -1,7 +1,19 @@
-// @ts-nocheck
 import { GraphClient } from "./graphClient.js";
+import type { GraphClientOptions } from "./graphClient.js";
 
-export function createGraphClient(profile, env = process.env) {
+interface GraphProfile {
+  graph?: {
+    scopes?: string[];
+  };
+}
+
+interface GraphFactoryResult {
+  enabled: boolean;
+  reason?: string;
+  client?: GraphClient;
+}
+
+export function createGraphClient(profile: GraphProfile, env: NodeJS.ProcessEnv = process.env): GraphFactoryResult {
   const clientId = env.MSGRAPH_APP_CLIENTID;
   const tenantId = env.MSGRAPH_APP_TENANTID || "common";
   const scopes = profile?.graph?.scopes?.length
@@ -15,14 +27,16 @@ export function createGraphClient(profile, env = process.env) {
     };
   }
 
+  const options: GraphClientOptions = {
+    clientId,
+    tenantId,
+    scopes,
+    cachePath: "./data/graph-token.json",
+    baseDir: env.MICRO_CLAW_HOME || process.cwd()
+  };
+
   return {
     enabled: true,
-    client: new GraphClient({
-      clientId,
-      tenantId,
-      scopes,
-      cachePath: "./data/graph-token.json",
-      baseDir: env.MICRO_CLAW_HOME || process.cwd()
-    })
+    client: new GraphClient(options)
   };
 }

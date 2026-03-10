@@ -1,9 +1,38 @@
-// @ts-nocheck
-function resolveStart(when, now = new Date()) {
+import type { ActionEnvelope, AgentExecutionContext, AgentExecutionResult } from "../../../core/contracts.js";
+
+interface ParsedTime {
+  hour: number;
+  minute: number;
+}
+
+interface GraphCreatedEvent {
+  id?: string;
+  subject?: string;
+  start?: unknown;
+  end?: unknown;
+  webLink?: string;
+}
+
+interface EventBodyPayload {
+  subject: string;
+  start: { dateTime: string; timeZone: string };
+  end: { dateTime: string; timeZone: string };
+  attendees: Array<{
+    emailAddress: { address: string };
+    type: string;
+  }>;
+  body?: {
+    contentType: "Text";
+    content: string;
+  };
+}
+
+function resolveStart(when: unknown, now = new Date()): Date {
   if (!when || when === "unspecified") return nextHour(now);
 
   const lower = String(when).toLowerCase();
-  const explicit = new Date(when);
+  const raw = typeof when === "string" || typeof when === "number" || when instanceof Date ? when : "";
+  const explicit = new Date(raw);
   if (!Number.isNaN(explicit.getTime())) return explicit;
 
   const base = new Date(now);
@@ -24,7 +53,7 @@ function resolveStart(when, now = new Date()) {
   return nextHour(base);
 }
 
-function normalizeAttendees(value) {
+function normalizeAttendees(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   const out = [];
   for (const item of value) {
@@ -39,7 +68,7 @@ function normalizeAttendees(value) {
   return [...new Set(out)];
 }
 
-function parseTime(text) {
+function parseTime(text: string): ParsedTime | null {
   const match = text.match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/);
   if (!match) return null;
   let hour = Number(match[1]);
@@ -51,36 +80,42 @@ function parseTime(text) {
   return { hour, minute };
 }
 
-function nextHour(now) {
+function nextHour(now: Date): Date {
   const d = new Date(now);
   d.setMinutes(0, 0, 0);
   d.setHours(d.getHours() + 1);
   return d;
 }
 
-function shiftToWeekday(date, weekday, forceNextWeek = false) {
+function shiftToWeekday(date: Date, weekday: number, forceNextWeek = false): void {
   const current = date.getDay();
   let delta = (weekday - current + 7) % 7;
   if (delta === 0 || forceNextWeek) delta += 7;
   date.setDate(date.getDate() + delta);
 }
 
-function toGraphDateTime(value) {
+function toGraphDateTime(value: Date): string {
   return value.toISOString().replace("Z", "");
 }
 
-function isEmail(value) {
+function isEmail(value: unknown): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value ?? "").trim());
 }
 
-export async function scheduleEventAction(env, ctx) {
+export async function scheduleEventAction(
+  env: ActionEnvelope,
+  ctx: AgentExecutionContext
+): Promise<AgentExecutionResult> {
   const graph = ctx.graphClient;
+  if (!graph?.post) {
+    return { status: "error", message: "Graph client is not configured." };
+  }
   const now = new Date();
   const start = resolveStart(env.params?.when, now);
   const end = new Date(start.getTime() + 60 * 60 * 1000);
 
-  const eventBody = {
-    subject: env.params?.title || "New event",
+  const eventBody: EventBodyPayload = {
+    subject: typeof env.params?.title === "string" ? env.params.title : "New event",
     start: { dateTime: toGraphDateTime(start), timeZone: "UTC" },
     end: { dateTime: toGraphDateTime(end), timeZone: "UTC" },
     attendees: normalizeAttendees(env.params?.attendees).map((addr) => ({
@@ -101,7 +136,7 @@ export async function scheduleEventAction(env, ctx) {
     };
   }
 
-  const created = await graph.post("/me/events", eventBody);
+  const created = (await graph.post("/me/events", eventBody)) as GraphCreatedEvent;
   return {
     status: "ok",
     message: `Calendar event scheduled: ${created.subject}`,

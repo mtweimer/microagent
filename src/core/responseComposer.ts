@@ -1,6 +1,7 @@
 import { getActionConfig } from "../contracts/actionRegistry.js";
 import { assembleChatMessages, assembleComposerMessages } from "./promptAssembler.js";
 import { composeWithFallback } from "./composerGateway.js";
+import type { PersonaContext } from "./personaContext.js";
 import type {
   ActionEnvelope,
   AgentExecutionResult,
@@ -42,7 +43,7 @@ interface TextBuildInput {
 interface ChatComposeInput {
   input: string;
   modelGateway: ModelGatewayLike;
-  personaContext?: unknown;
+  personaContext?: PersonaContext | null | undefined;
   capabilityPack: CapabilityPack;
   memoryEvidence: MemoryQueryHit[];
   narrativeEntries: AnyRecord[];
@@ -54,7 +55,7 @@ interface ComposeResponseInput {
   actionEnvelope: ActionEnvelope | null;
   executionResult: AgentExecutionResult;
   memoryRefs?: Array<string | number>;
-  personaContext?: unknown;
+  personaContext?: PersonaContext | null | undefined;
   capabilityPack: CapabilityPack;
   modelGateway: ModelGatewayLike | null;
   composerConfig?: AnyRecord;

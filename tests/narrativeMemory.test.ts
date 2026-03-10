@@ -1,4 +1,3 @@
-// @ts-nocheck
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -15,7 +14,7 @@ test("narrative memory appends and summarizes entries", () => {
 
   const entries = memory.summarize("today", 5);
   assert.equal(entries.length >= 1, true);
-  assert.match(entries[0].text, /reviewed|follow-up/i);
+  assert.match(String(entries[0]?.text), /reviewed|follow-up/i);
 
   if (fs.existsSync(FILE)) fs.unlinkSync(FILE);
 });

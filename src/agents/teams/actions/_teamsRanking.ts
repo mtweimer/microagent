@@ -1,5 +1,27 @@
-// @ts-nocheck
-function textScore(text) {
+import type { TeamsCatalogRow, TeamsMessageRow } from "./_teamsGraph.js";
+
+interface RankingOptions {
+  automationPenalty?: string | number;
+  mentionBoost?: number;
+  directedLanguageBoost?: number;
+}
+
+interface RankedTeamsMessage extends TeamsMessageRow {
+  why?: string;
+  score?: number;
+  scoreBreakdown?: Record<string, number>;
+  searchableFieldsMatched?: string[];
+}
+
+type EntityCatalogRow = TeamsCatalogRow & { type?: string | undefined; name?: string | null | undefined };
+
+interface EntityCatalog {
+  teams?: EntityCatalogRow[];
+  channels?: EntityCatalogRow[];
+  chats?: EntityCatalogRow[];
+}
+
+function textScore(text: unknown): number {
   const lower = String(text ?? "").toLowerCase();
   let score = 0;
   if (lower.includes("urgent")) score += 4;
@@ -14,7 +36,7 @@ function textScore(text) {
   return score;
 }
 
-function normalizeRankingOptions(options = {}) {
+function normalizeRankingOptions(options: RankingOptions = {}) {
   const penaltyPreset = String(options.automationPenalty ?? "moderate").toLowerCase();
   const automationPenalty =
     penaltyPreset === "aggressive" ? -4 : penaltyPreset === "neutral" ? 0 : -2;
@@ -29,7 +51,7 @@ function normalizeRankingOptions(options = {}) {
   };
 }
 
-function tokenize(value) {
+function tokenize(value: unknown): string[] {
   return String(value ?? "")
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, " ")
@@ -37,29 +59,34 @@ function tokenize(value) {
     .filter((t) => t.length >= 2);
 }
 
-function unique(values) {
+function unique<T>(values: T[]): T[] {
   return [...new Set(values)];
 }
 
-export function buildSearchBlob(msg = {}) {
+export function buildSearchBlob(msg?: TeamsMessageRow): string {
+  const row = msg;
   const parts = [
-    msg.bodyPreview,
-    msg.subject,
-    msg.summary,
-    msg.teamName,
-    msg.channelName,
-    msg.chatTopic,
-    msg.from,
-    ...(Array.isArray(msg.mentions) ? msg.mentions : []),
-    ...(Array.isArray(msg.attachmentNames) ? msg.attachmentNames : [])
+    row?.bodyPreview,
+    row?.subject,
+    row?.summary,
+    row?.teamName,
+    row?.channelName,
+    row?.chatTopic,
+    row?.from,
+    ...(Array.isArray(row?.mentions) ? row.mentions : []),
+    ...(Array.isArray(row?.attachmentNames) ? row.attachmentNames : [])
   ]
     .map((x) => String(x ?? "").trim())
     .filter(Boolean);
   return parts.join(" | ");
 }
 
-function recencyScore(createdDateTime) {
-  const ts = new Date(createdDateTime ?? 0).getTime();
+function recencyScore(createdDateTime: unknown): number {
+  const raw =
+    typeof createdDateTime === "string" || typeof createdDateTime === "number" || createdDateTime instanceof Date
+      ? createdDateTime
+      : 0;
+  const ts = new Date(raw).getTime();
   if (!ts || Number.isNaN(ts)) return 0;
   const ageHours = Math.max(0, (Date.now() - ts) / 3600000);
   if (ageHours <= 2) return 4;
@@ -69,7 +96,7 @@ function recencyScore(createdDateTime) {
   return 0;
 }
 
-function isAutomationSender(sender) {
+function isAutomationSender(sender: unknown): boolean {
   const lower = String(sender ?? "").toLowerCase();
   return (
     lower.includes("workflows") ||
@@ -80,19 +107,19 @@ function isAutomationSender(sender) {
   );
 }
 
-function senderQualityScore(sender, options = {}) {
+function senderQualityScore(sender: unknown, options: RankingOptions = {}): number {
   const cfg = normalizeRankingOptions(options);
   return isAutomationSender(sender) ? cfg.automationPenalty : 1;
 }
 
-function importanceScore(importance) {
+function importanceScore(importance: unknown): number {
   const value = String(importance ?? "").toLowerCase();
   if (value === "high") return 2;
   if (value === "normal") return 1;
   return 0;
 }
 
-export function scoreTeamsMessage(msg, options = {}) {
+export function scoreTeamsMessage(msg: TeamsMessageRow, options: RankingOptions = {}): number {
   return (
     textScoreWithOptions(msg?.bodyPreview, options) +
     recencyScore(msg?.createdDateTime) +
@@ -101,7 +128,7 @@ export function scoreTeamsMessage(msg, options = {}) {
   );
 }
 
-export function rankTeamsMessages(rows = [], limit = 10, options = {}) {
+export function rankTeamsMessages(rows: TeamsMessageRow[] = [], limit = 10, options: RankingOptions = {}): TeamsMessageRow[] {
   return [...rows]
     .map((m) => ({ ...m, _score: scoreTeamsMessage(m, options) }))
     .sort((a, b) => b._score - a._score || String(b.createdDateTime).localeCompare(String(a.createdDateTime)))
@@ -109,7 +136,15 @@ export function rankTeamsMessages(rows = [], limit = 10, options = {}) {
     .map(({ _score, ...rest }) => rest);
 }
 
-export function rankTeamsMessagesByQuery(rows = [], query = "", { limit = 10, memoryHints = [], options = {} } = {}) {
+export function rankTeamsMessagesByQuery(
+  rows: TeamsMessageRow[] = [],
+  query = "",
+  {
+    limit = 10,
+    memoryHints = [],
+    options = {}
+  }: { limit?: number; memoryHints?: string[]; options?: RankingOptions } = {}
+): RankedTeamsMessage[] {
   const queryTokens = unique(tokenize(query));
   const hints = unique(memoryHints.flatMap((h) => tokenize(h))).slice(0, 30);
 
@@ -128,7 +163,11 @@ export function rankTeamsMessagesByQuery(rows = [], query = "", { limit = 10, me
   }));
 }
 
-export function rankTeamsEntityCandidates(catalog = {}, query = "", limit = 5) {
+export function rankTeamsEntityCandidates(
+  catalog: EntityCatalog = {},
+  query = "",
+  limit = 5
+): Array<EntityCatalogRow & { score: number; why: string; label: string; type: string }> {
   const queryTokens = unique(tokenize(query));
   if (queryTokens.length === 0) return [];
   const rows = [
@@ -143,7 +182,7 @@ export function rankTeamsEntityCandidates(catalog = {}, query = "", limit = 5) {
     .sort((a, b) => b.score - a.score || String(a.label).localeCompare(String(b.label)))
     .slice(0, limit)
     .map((x) => ({
-      type: x.type,
+      type: String(x.type ?? ""),
       id: x.id,
       label: x.label,
       teamId: x.teamId ?? null,
@@ -156,7 +195,7 @@ export function rankTeamsEntityCandidates(catalog = {}, query = "", limit = 5) {
     }));
 }
 
-export function looksLikeMention(text) {
+export function looksLikeMention(text: unknown): boolean {
   const lower = String(text ?? "").toLowerCase();
   return (
     lower.includes("@") ||
@@ -167,7 +206,7 @@ export function looksLikeMention(text) {
   );
 }
 
-export function whyRanked(msg) {
+export function whyRanked(msg: TeamsMessageRow): string {
   const lower = String(msg?.bodyPreview ?? "").toLowerCase();
   const reasons = [];
   if (lower.includes("urgent") || lower.includes("asap")) reasons.push("urgent wording");
@@ -178,7 +217,7 @@ export function whyRanked(msg) {
   return reasons.join(", ");
 }
 
-function scoreForQuery(item, queryTokens, memoryHintTokens, options = {}) {
+function scoreForQuery(item: TeamsMessageRow, queryTokens: string[], memoryHintTokens: string[], options: RankingOptions = {}) {
   const cfg = normalizeRankingOptions(options);
   const fieldTexts = {
     bodyPreview: String(item.bodyPreview ?? "").toLowerCase(),
@@ -246,7 +285,24 @@ function scoreForQuery(item, queryTokens, memoryHintTokens, options = {}) {
   };
 }
 
-function buildWhy(fieldTexts, breakdown, queryTokens, cfg) {
+type ScoreBreakdown = {
+  queryTokenHits: number;
+  bodyMatch: number;
+  nameMatch: number;
+  senderMatch: number;
+  memoryHintHits: number;
+  urgency: number;
+  recency: number;
+  importance: number;
+  senderQuality: number;
+};
+
+function buildWhy(
+  fieldTexts: Record<string, string>,
+  breakdown: ScoreBreakdown,
+  queryTokens: string[],
+  cfg: { automationPenalty: number; mentionBoost: number; directedLanguageBoost: number }
+): string {
   const reasons = [];
   if (breakdown.nameMatch > 0) reasons.push("matched team/channel name");
   if (breakdown.bodyMatch > 0) reasons.push("matched message content");
@@ -255,7 +311,7 @@ function buildWhy(fieldTexts, breakdown, queryTokens, cfg) {
   if (breakdown.urgency > 0) reasons.push("contains urgency/action language");
   if (cfg.automationPenalty < 0 && breakdown.senderQuality < 0) reasons.push("automation sender deprioritized");
   if (reasons.length === 0 && queryTokens.length > 0) {
-    if (queryTokens.some((t) => fieldTexts.summary.includes(t) || fieldTexts.subject.includes(t))) {
+    if (queryTokens.some((t) => (fieldTexts.summary ?? "").includes(t) || (fieldTexts.subject ?? "").includes(t))) {
       reasons.push("matched summary/subject");
     }
   }
@@ -263,7 +319,7 @@ function buildWhy(fieldTexts, breakdown, queryTokens, cfg) {
   return reasons.join(", ");
 }
 
-function textScoreWithOptions(text, options = {}) {
+function textScoreWithOptions(text: unknown, options: RankingOptions = {}): number {
   const cfg = normalizeRankingOptions(options);
   const lower = String(text ?? "").toLowerCase();
   let score = textScore(text);
@@ -272,7 +328,7 @@ function textScoreWithOptions(text, options = {}) {
   return score;
 }
 
-function scoreEntityCandidate(row, queryTokens) {
+function scoreEntityCandidate(row: EntityCatalogRow, queryTokens: string[]) {
   const label = String(
     row?.type === "channel" ? `${row.teamName ?? ""} ${row.channelName ?? ""}` : row?.label ?? row?.name ?? ""
   )

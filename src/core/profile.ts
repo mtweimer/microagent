@@ -1,10 +1,54 @@
-// @ts-nocheck
 import fs from "node:fs";
 import path from "node:path";
 
+export interface MicroClawProfile {
+  name?: string;
+  provider?: {
+    active?: string;
+    models?: Record<string, string>;
+  };
+  agents?: {
+    enabled?: string[];
+    paths?: string[];
+  };
+  graph?: {
+    auth?: {
+      mode?: string;
+    };
+    scopes?: string[];
+  };
+  memory?: {
+    backend?: string;
+    dbPath?: string;
+  };
+  cache?: {
+    enabled?: boolean;
+    grammarSystem?: "completionBased" | "nfa" | string;
+  };
+  safety?: {
+    localToolsPolicy?: string;
+    suggestionPolicy?: {
+      maxAutoApplyRisk?: string;
+    };
+  };
+  conversation?: {
+    composer?: {
+      enabled?: boolean;
+      primary?: Record<string, unknown>;
+      fallback?: Record<string, unknown>;
+    };
+  };
+  [key: string]: unknown;
+}
+
+export interface ProfileValidationResult {
+  ok: boolean;
+  errors: string[];
+}
+
 const PROFILE_DIR = path.resolve(process.cwd(), "profiles");
 
-export function listProfiles() {
+export function listProfiles(): string[] {
   if (!fs.existsSync(PROFILE_DIR)) return [];
   return fs
     .readdirSync(PROFILE_DIR)
@@ -13,52 +57,54 @@ export function listProfiles() {
     .sort();
 }
 
-export function loadProfile(name = "default") {
+export function loadProfile(name = "default"): { profile: MicroClawProfile; filePath: string } {
   const filePath = path.join(PROFILE_DIR, `${name}.json`);
   if (!fs.existsSync(filePath)) {
     throw new Error(`Profile '${name}' not found at ${filePath}`);
   }
-  const profile = JSON.parse(fs.readFileSync(filePath, "utf8"));
+  const profile = JSON.parse(fs.readFileSync(filePath, "utf8")) as MicroClawProfile;
   return { profile, filePath };
 }
 
-export function validateProfile(profile) {
-  const errors = [];
+export function validateProfile(profile: unknown): ProfileValidationResult {
+  const errors: string[] = [];
 
   if (!profile || typeof profile !== "object") {
     return { ok: false, errors: ["Profile must be an object"] };
   }
 
-  if (!profile.name) errors.push("Missing profile.name");
-  if (!profile.provider?.active) errors.push("Missing provider.active");
-  if (!profile.provider?.models || typeof profile.provider.models !== "object") {
+  const typed = profile as MicroClawProfile;
+
+  if (!typed.name) errors.push("Missing profile.name");
+  if (!typed.provider?.active) errors.push("Missing provider.active");
+  if (!typed.provider?.models || typeof typed.provider.models !== "object") {
     errors.push("Missing provider.models");
   }
-  if (!Array.isArray(profile.agents?.enabled)) errors.push("Missing agents.enabled[]");
+  if (!Array.isArray(typed.agents?.enabled)) errors.push("Missing agents.enabled[]");
   if (
-    typeof profile.agents?.paths !== "undefined" &&
-    (!Array.isArray(profile.agents.paths) || profile.agents.paths.some((p) => typeof p !== "string"))
+    typeof typed.agents?.paths !== "undefined" &&
+    (!Array.isArray(typed.agents.paths) || typed.agents.paths.some((p) => typeof p !== "string"))
   ) {
     errors.push("agents.paths must be string[]");
   }
-  if (!profile.graph?.auth?.mode) errors.push("Missing graph.auth.mode");
-  if (!Array.isArray(profile.graph?.scopes)) errors.push("Missing graph.scopes[]");
-  if (!profile.memory?.backend) errors.push("Missing memory.backend");
-  if (!profile.memory?.dbPath) errors.push("Missing memory.dbPath");
-  if (typeof profile.cache?.enabled !== "boolean") errors.push("Missing cache.enabled");
-  if (profile.cache?.grammarSystem && !["completionBased", "nfa"].includes(profile.cache.grammarSystem)) {
+  if (!typed.graph?.auth?.mode) errors.push("Missing graph.auth.mode");
+  if (!Array.isArray(typed.graph?.scopes)) errors.push("Missing graph.scopes[]");
+  if (!typed.memory?.backend) errors.push("Missing memory.backend");
+  if (!typed.memory?.dbPath) errors.push("Missing memory.dbPath");
+  if (typeof typed.cache?.enabled !== "boolean") errors.push("Missing cache.enabled");
+  if (typed.cache?.grammarSystem && !["completionBased", "nfa"].includes(typed.cache.grammarSystem)) {
     errors.push("cache.grammarSystem must be completionBased or nfa");
   }
-  if (!profile.safety?.localToolsPolicy) errors.push("Missing safety.localToolsPolicy");
+  if (!typed.safety?.localToolsPolicy) errors.push("Missing safety.localToolsPolicy");
   if (
-    profile.safety?.suggestionPolicy &&
-    typeof profile.safety.suggestionPolicy.maxAutoApplyRisk !== "string"
+    typed.safety?.suggestionPolicy &&
+    typeof typed.safety.suggestionPolicy.maxAutoApplyRisk !== "string"
   ) {
     errors.push("safety.suggestionPolicy.maxAutoApplyRisk must be string");
   }
 
-  if (profile.conversation?.composer) {
-    const composer = profile.conversation.composer;
+  if (typed.conversation?.composer) {
+    const composer = typed.conversation.composer;
     if (typeof composer.enabled !== "undefined" && typeof composer.enabled !== "boolean") {
       errors.push("conversation.composer.enabled must be boolean");
     }
@@ -76,12 +122,12 @@ export function validateProfile(profile) {
   };
 }
 
-export function resolveProfileModel(profile, provider) {
+export function resolveProfileModel(profile: MicroClawProfile, provider: string): string | undefined {
   return profile.provider?.models?.[provider];
 }
 
-export function applyProfileToEnv(profile, env = process.env) {
-  env.MICRO_CLAW_PROVIDER = profile.provider.active;
+export function applyProfileToEnv(profile: MicroClawProfile, env: NodeJS.ProcessEnv = process.env): void {
+  if (profile.provider?.active) env.MICRO_CLAW_PROVIDER = profile.provider.active;
 
   if (profile.provider?.models?.openai) {
     env.OPENAI_MODEL = profile.provider.models.openai;

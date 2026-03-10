@@ -1,4 +1,3 @@
-// @ts-nocheck
 import test from "node:test";
 import assert from "node:assert/strict";
 
@@ -19,7 +18,7 @@ test("profile validation rejects non-string agent paths", () => {
     ...base,
     agents: {
       ...base.agents,
-      paths: [123]
+      paths: [123 as unknown as string]
     }
   });
   assert.equal(validation.ok, false);

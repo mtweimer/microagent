@@ -1,4 +1,3 @@
-// @ts-nocheck
 import test from "node:test";
 import assert from "node:assert/strict";
 
@@ -14,7 +13,7 @@ test("strict validation fails unknown action", () => {
   });
 
   assert.equal(result.ok, false);
-  assert.match(result.errors[0], /Unknown action/);
+  assert.match(result.errors[0] ?? "", /Unknown action/);
 });
 
 test("strict validation fails schema version mismatch", () => {

@@ -1,16 +1,209 @@
-// @ts-nocheck
 import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fetchTeamsMessages } from "../agents/teams/actions/_teamsGraph.js";
 
-function clamp(value, min, max, fallback) {
+interface TeamsMessageRow {
+  message_id: string;
+  source_type: string;
+  from_name: string | null;
+  created_at: string;
+  importance: string | null;
+  web_url: string | null;
+  subject: string | null;
+  summary: string | null;
+  body_preview: string | null;
+  chat_id: string | null;
+  chat_topic: string | null;
+  team_id: string | null;
+  team_name: string | null;
+  channel_id: string | null;
+  channel_name: string | null;
+}
+
+interface TeamsEntityRow {
+  entity_type: string;
+  entity_id: string;
+  label: string;
+  team_name: string | null;
+  channel_name: string | null;
+  web_url: string | null;
+}
+
+interface CountRow {
+  count?: number;
+}
+
+interface LatestCreatedRow {
+  created?: string | null;
+}
+
+interface CheckpointRow {
+  source: string;
+  cursor_or_time: string | null;
+  last_success_at: string | null;
+  last_error: string | null;
+}
+
+interface SyncStateRow {
+  source: string;
+  last_mode: string | null;
+  last_delta_since: string | null;
+  last_upserts: number | null;
+  last_updates: number | null;
+  last_unchanged: number | null;
+  last_indexed: number | null;
+  total_retained: number | null;
+  updated_at: string | null;
+}
+
+interface ScopeStatsRow {
+  chats?: number | null;
+  channels?: number | null;
+}
+
+interface TeamsCatalogEntry {
+  id?: string;
+  label?: string;
+  teamId?: string | null;
+  teamName?: string | null;
+  channelId?: string | null;
+  channelName?: string | null;
+  webUrl?: string | null;
+}
+
+export interface TeamsIndexedMessage {
+  id: string;
+  sourceType: string;
+  sourcePath: string;
+  from: string | null;
+  createdDateTime: string;
+  importance: string;
+  webUrl: string | null;
+  subject: string | null;
+  summary: string | null;
+  bodyPreview: string;
+  mentions: unknown[];
+  attachmentNames: unknown[];
+  chatId: string | null;
+  chatTopic: string | null;
+  teamId: string | null;
+  teamName: string | null;
+  channelId: string | null;
+  channelName: string | null;
+}
+
+export interface TeamsFallbackMatch {
+  type: string;
+  id: string;
+  label: string;
+  teamName: string | null;
+  channelName: string | null;
+  webUrl: string | null;
+  score: number;
+  why: string;
+}
+
+interface TeamsCoverage {
+  chatsScanned: number;
+  chatMessagesScanned: number;
+  channelsScanned: number;
+  channelMessagesScanned: number;
+  totalCandidates: number;
+}
+
+interface TeamsCatalog {
+  chats?: TeamsCatalogEntry[];
+  teams?: TeamsCatalogEntry[];
+  channels?: TeamsCatalogEntry[];
+}
+
+interface FetchTeamsMessagesResult {
+  messages?: TeamsIndexedMessage[];
+  catalog?: TeamsCatalog;
+  coverage?: Partial<TeamsCoverage>;
+  limitations?: string[];
+}
+
+interface SyncOptions {
+  top?: number;
+  surface?: string;
+  depth?: string;
+  window?: string;
+  mode?: string;
+  deltaSinceIso?: string;
+  deltaLookbackHours?: number;
+}
+
+interface SearchOptions {
+  query?: string;
+  top?: number;
+  window?: string;
+  surface?: string;
+  team?: string;
+  channel?: string;
+  sender?: string;
+  since?: string;
+  until?: string;
+  importance?: string;
+}
+
+export interface TeamsIndexStatus {
+  enabled: boolean;
+  backend: string;
+  messages: number;
+  bySource: {
+    chats: number;
+    channels: number;
+  };
+  latestCreatedAt: string | null;
+  lastSyncAt: string | null;
+  lastSyncError: string | null;
+  checkpointTime: string | null;
+  lastSyncMode: string | null;
+  lastDeltaSince: string | null;
+  lastDeltaUpserts: number;
+  lastDeltaUpdates: number;
+  lastDeltaUnchanged: number;
+  lastIndexed: number;
+  stale: boolean;
+}
+
+export interface TeamsSearchResult {
+  messages: TeamsIndexedMessage[];
+  fallbackMatches: TeamsFallbackMatch[];
+  coverage: TeamsCoverage;
+  limitations: string[];
+  sources: string[];
+}
+
+export interface TeamsSyncResult {
+  status: "ok" | "error";
+  message: string;
+  mode?: string;
+  deltaSince?: string | null;
+  indexed?: number;
+  upserts?: number;
+  updates?: number;
+  unchanged?: number;
+  retainedFromThisRun?: number;
+  droppedByRetention?: number;
+  totalRetained?: number;
+  coverage?: Partial<TeamsCoverage>;
+  limitations?: string[];
+}
+
+type GraphLike = {
+  get?: (endpoint: string) => Promise<unknown>;
+};
+
+function clamp(value: unknown, min: number, max: number, fallback: number): number {
   const n = Number(value);
   if (Number.isNaN(n)) return fallback;
   return Math.max(min, Math.min(max, Math.floor(n)));
 }
 
-function sinceIso(window) {
+function sinceIso(window: unknown): string | null {
   const now = new Date();
   const lower = String(window ?? "today").toLowerCase();
   if (lower === "all") return null;
@@ -20,7 +213,7 @@ function sinceIso(window) {
   return new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0).toISOString();
 }
 
-function tokenizeQuery(query) {
+function tokenizeQuery(query: unknown): string[] {
   return String(query ?? "")
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, " ")
@@ -28,7 +221,7 @@ function tokenizeQuery(query) {
     .filter((t) => t.length >= 2);
 }
 
-function mapRow(row) {
+function mapRow(row: TeamsMessageRow): TeamsIndexedMessage {
   return {
     id: row.message_id,
     sourceType: row.source_type,
@@ -51,12 +244,67 @@ function mapRow(row) {
   };
 }
 
+function isSameMessage(existing: TeamsMessageRow, row: TeamsIndexedMessage): boolean {
+  return (
+    String(existing.source_type ?? "") === String(row.sourceType ?? "") &&
+    String(existing.from_name ?? "") === String(row.from ?? "") &&
+    String(existing.created_at ?? "") === String(row.createdDateTime ?? "") &&
+    String(existing.importance ?? "") === String(row.importance ?? "") &&
+    String(existing.web_url ?? "") === String(row.webUrl ?? "") &&
+    String(existing.subject ?? "") === String(row.subject ?? "") &&
+    String(existing.summary ?? "") === String(row.summary ?? "") &&
+    String(existing.body_preview ?? "") === String(row.bodyPreview ?? "") &&
+    String(existing.chat_id ?? "") === String(row.chatId ?? "") &&
+    String(existing.chat_topic ?? "") === String(row.chatTopic ?? "") &&
+    String(existing.team_id ?? "") === String(row.teamId ?? "") &&
+    String(existing.team_name ?? "") === String(row.teamName ?? "") &&
+    String(existing.channel_id ?? "") === String(row.channelId ?? "") &&
+    String(existing.channel_name ?? "") === String(row.channelName ?? "")
+  );
+}
+
+function maxTimestamp(values: Array<string | null | undefined> = []): string {
+  let max = 0;
+  for (const value of values) {
+    const ts = new Date(String(value ?? "")).getTime();
+    if (!Number.isNaN(ts) && ts > max) max = ts;
+  }
+  if (!max) return "";
+  return new Date(max).toISOString();
+}
+
 export class TeamsIndex {
+  dbPath: string;
+  retentionDays: number;
+  deltaLookbackHours: number;
+  ready: boolean;
+  syncIntervalMs: number;
+  staleThresholdMs: number;
+  db!: DatabaseSync;
+  upsertMessageStmt!: ReturnType<DatabaseSync["prepare"]>;
+  deleteFtsStmt!: ReturnType<DatabaseSync["prepare"]>;
+  insertFtsStmt!: ReturnType<DatabaseSync["prepare"]>;
+  upsertEntityStmt!: ReturnType<DatabaseSync["prepare"]>;
+  upsertCheckpointStmt!: ReturnType<DatabaseSync["prepare"]>;
+  getCheckpointStmt!: ReturnType<DatabaseSync["prepare"]>;
+  getSyncStateStmt!: ReturnType<DatabaseSync["prepare"]>;
+  upsertSyncStateStmt!: ReturnType<DatabaseSync["prepare"]>;
+  getMessageByIdStmt!: ReturnType<DatabaseSync["prepare"]>;
+  countMessagesStmt!: ReturnType<DatabaseSync["prepare"]>;
+  latestCreatedStmt!: ReturnType<DatabaseSync["prepare"]>;
+  latestSyncStmt!: ReturnType<DatabaseSync["prepare"]>;
+  statsScopeStmt!: ReturnType<DatabaseSync["prepare"]>;
+
   constructor({
     dbPath = "./data/teams-index.sqlite",
     retentionDays = 180,
     deltaLookbackHours = 6,
     deltaIntervalMs = 5 * 60 * 1000
+  }: {
+    dbPath?: string;
+    retentionDays?: number;
+    deltaLookbackHours?: number;
+    deltaIntervalMs?: number;
   } = {}) {
     this.dbPath = path.resolve(process.cwd(), dbPath);
     this.retentionDays = clamp(retentionDays, 30, 3650, 180);
@@ -66,7 +314,7 @@ export class TeamsIndex {
     this.staleThresholdMs = 30 * 60 * 1000;
   }
 
-  initialize() {
+  initialize(): void {
     if (this.ready) return;
     const dir = path.dirname(this.dbPath);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -209,7 +457,13 @@ export class TeamsIndex {
     this.ready = true;
   }
 
-  getConfig() {
+  getConfig(): {
+    dbPath: string;
+    retentionDays: number;
+    deltaLookbackHours: number;
+    syncIntervalMs: number;
+    staleThresholdMs: number;
+  } {
     return {
       dbPath: this.dbPath,
       retentionDays: this.retentionDays,
@@ -219,13 +473,13 @@ export class TeamsIndex {
     };
   }
 
-  getStatus() {
+  getStatus(): TeamsIndexStatus {
     this.initialize();
-    const messages = Number(this.countMessagesStmt.get()?.count ?? 0);
-    const latestCreated = this.latestCreatedStmt.get()?.created ?? null;
-    const checkpoint = this.getCheckpointStmt.get("teams") ?? null;
-    const syncState = this.getSyncStateStmt.get("teams") ?? null;
-    const scope = this.statsScopeStmt.get() ?? { chats: 0, channels: 0 };
+    const messages = Number((this.countMessagesStmt.get() as CountRow | undefined)?.count ?? 0);
+    const latestCreated = (this.latestCreatedStmt.get() as LatestCreatedRow | undefined)?.created ?? null;
+    const checkpoint = (this.getCheckpointStmt.get("teams") as CheckpointRow | undefined) ?? null;
+    const syncState = (this.getSyncStateStmt.get("teams") as SyncStateRow | undefined) ?? null;
+    const scope = (this.statsScopeStmt.get() as ScopeStatsRow | undefined) ?? { chats: 0, channels: 0 };
     const lastSuccessAt = checkpoint?.last_success_at ?? null;
     const stale = lastSuccessAt ? Date.now() - new Date(lastSuccessAt).getTime() > this.staleThresholdMs : true;
     return {
@@ -250,15 +504,13 @@ export class TeamsIndex {
     };
   }
 
-  async syncFromGraph(
-    graphClient,
-    { top = 100, surface = "both", depth = "deep", window = "all", mode = "full", deltaSinceIso = "", deltaLookbackHours } = {}
-  ) {
+  async syncFromGraph(graphClient: GraphLike | null | undefined, options: SyncOptions = {}): Promise<TeamsSyncResult> {
     this.initialize();
     const startedAt = new Date().toISOString();
+    const { top = 100, surface = "both", depth = "deep", window = "all", mode = "full", deltaSinceIso = "", deltaLookbackHours } = options;
     const safeTop = clamp(top, 1, 5000, 100);
     const normalizedMode = String(mode ?? "full").toLowerCase() === "delta" ? "delta" : "full";
-    const checkpoint = this.getCheckpointStmt.get("teams") ?? null;
+    const checkpoint = (this.getCheckpointStmt.get("teams") as CheckpointRow | undefined) ?? null;
     const lookbackMs = clamp(deltaLookbackHours, 1, 168, this.deltaLookbackHours) * 60 * 60 * 1000;
     const baseCursor = String(deltaSinceIso || checkpoint?.cursor_or_time || "").trim();
     const deltaSince = normalizedMode === "delta"
@@ -274,21 +526,21 @@ export class TeamsIndex {
       return { status: "error", message: "Graph client unavailable for Teams sync." };
     }
     try {
-      const result = await fetchTeamsMessages(graphClient, {
+      const result = (await fetchTeamsMessages(graphClient, {
         top: safeTop,
-        surface,
-        depth,
-        window: normalizedMode === "delta" ? "all" : window,
+        surface: surface as import("../agents/teams/actions/_teamsParams.js").TeamsSurface,
+        depth: depth as import("../agents/teams/actions/_teamsParams.js").TeamsDepth,
+        window: (normalizedMode === "delta" ? "all" : window) as import("../agents/teams/actions/_teamsParams.js").TeamsWindow,
         query: "",
         since: deltaSince
-      });
+      })) as FetchTeamsMessagesResult;
       const now = new Date().toISOString();
-      const beforeCount = Number(this.countMessagesStmt.get()?.count ?? 0);
+      const beforeCount = Number((this.countMessagesStmt.get() as CountRow | undefined)?.count ?? 0);
       let upserts = 0;
       let updates = 0;
       let unchanged = 0;
       for (const row of result.messages ?? []) {
-        const existing = this.getMessageByIdStmt.get(row.id);
+        const existing = this.getMessageByIdStmt.get(row.id) as TeamsMessageRow | undefined;
         if (!existing) upserts += 1;
         else if (isSameMessage(existing, row)) unchanged += 1;
         else updates += 1;
@@ -366,11 +618,11 @@ export class TeamsIndex {
         );
       }
       this.pruneRetention();
-      const afterCount = Number(this.countMessagesStmt.get()?.count ?? 0);
+      const afterCount = Number((this.countMessagesStmt.get() as CountRow | undefined)?.count ?? 0);
       const indexed = result.messages?.length ?? 0;
       const retainedFromThisRun = Math.max(0, afterCount - beforeCount);
       const droppedByRetention = Math.max(0, indexed - retainedFromThisRun);
-      const latestSeen = maxTimestamp(result.messages?.map((m) => m.createdDateTime).filter(Boolean));
+      const latestSeen = maxTimestamp((result.messages ?? []).map((m) => m.createdDateTime).filter(Boolean));
       const nextCursor = latestSeen || checkpoint?.cursor_or_time || now;
       this.upsertCheckpointStmt.run("teams", nextCursor, now, null);
       this.upsertSyncStateStmt.run(
@@ -402,7 +654,7 @@ export class TeamsIndex {
         limitations: result.limitations ?? []
       };
     } catch (error) {
-      const msg = String(error?.message ?? error);
+      const msg = String(error instanceof Error ? error.message : error);
       this.upsertCheckpointStmt.run("teams", checkpoint?.cursor_or_time ?? startedAt, null, msg);
       return {
         status: "error",
@@ -411,7 +663,7 @@ export class TeamsIndex {
     }
   }
 
-  pruneRetention() {
+  pruneRetention(): void {
     this.initialize();
     const cutoff = new Date(Date.now() - this.retentionDays * 24 * 60 * 60 * 1000).toISOString();
     this.db.prepare("DELETE FROM teams_messages WHERE created_at < ?").run(cutoff);
@@ -429,14 +681,14 @@ export class TeamsIndex {
     since = "",
     until = "",
     importance = ""
-  } = {}) {
+  }: SearchOptions = {}): TeamsSearchResult {
     this.initialize();
     const limit = clamp(top, 1, 100, 30);
     const windowSince = sinceIso(window);
     const sinceFilter = String(since ?? "").trim() || windowSince || "";
     const untilFilter = String(until ?? "").trim();
-    const where = [];
-    const params = {};
+    const where: string[] = [];
+    const params: Record<string, string | number> = {};
 
     if (surface === "chats") where.push("m.source_type = 'chat'");
     else if (surface === "channels") where.push("m.source_type = 'channel'");
@@ -468,7 +720,7 @@ export class TeamsIndex {
     const q = String(query ?? "").trim();
     const tokens = tokenizeQuery(q);
 
-    let rows = [];
+    let rows: TeamsMessageRow[] = [];
     if (tokens.length > 0) {
       const matchQuery = tokens.map((t) => `${t}*`).join(" OR ");
       const stmt = this.db.prepare(`
@@ -479,7 +731,7 @@ export class TeamsIndex {
         ORDER BY m.created_at DESC
         LIMIT :limit
       `);
-      rows = stmt.all({ ...params, q: matchQuery, limit });
+      rows = stmt.all({ ...params, q: matchQuery, limit }) as unknown as TeamsMessageRow[];
     } else {
       const stmt = this.db.prepare(`
         SELECT m.*
@@ -488,7 +740,7 @@ export class TeamsIndex {
         ORDER BY m.created_at DESC
         LIMIT :limit
       `);
-      rows = stmt.all({ ...params, limit });
+      rows = stmt.all({ ...params, limit }) as unknown as TeamsMessageRow[];
     }
 
     const matched = rows.map(mapRow);
@@ -499,24 +751,22 @@ export class TeamsIndex {
       ORDER BY updated_at DESC
       LIMIT 5
     `);
-    const fallbackMatches = q
-      ? entityStmt
-          .all({ term: `%${q.toLowerCase()}%` })
-          .map((e) => ({
-            type: e.entity_type,
-            id: e.entity_id,
-            label: e.label,
-            teamName: e.team_name ?? null,
-            channelName: e.channel_name ?? null,
-            webUrl: e.web_url ?? null,
-            score: 1,
-            why: "matched indexed workspace name"
-          }))
+    const fallbackMatches: TeamsFallbackMatch[] = q
+      ? ((entityStmt.all({ term: `%${q.toLowerCase()}%` }) as unknown as TeamsEntityRow[]).map((e) => ({
+          type: e.entity_type,
+          id: e.entity_id,
+          label: e.label,
+          teamName: e.team_name ?? null,
+          channelName: e.channel_name ?? null,
+          webUrl: e.web_url ?? null,
+          score: 1,
+          why: "matched indexed workspace name"
+        })))
       : [];
 
-    const limitations = [];
+    const limitations: string[] = [];
     if (matched.length === 0 && fallbackMatches.length > 0) {
-      const total = Number(this.countMessagesStmt.get()?.count ?? 0);
+      const total = Number((this.countMessagesStmt.get() as CountRow | undefined)?.count ?? 0);
       if (total === 0) {
         limitations.push(
           "Local Teams message index currently has 0 retained messages (likely due retention window)."
@@ -524,14 +774,15 @@ export class TeamsIndex {
       }
     }
 
+    const scopeStats = (this.statsScopeStmt.get() as ScopeStatsRow | undefined) ?? { chats: 0, channels: 0 };
     return {
       messages: matched,
       fallbackMatches,
       coverage: {
-        chatsScanned: Number(this.statsScopeStmt.get()?.chats ?? 0),
-        chatMessagesScanned: Number(this.statsScopeStmt.get()?.chats ?? 0),
-        channelsScanned: Number(this.statsScopeStmt.get()?.channels ?? 0),
-        channelMessagesScanned: Number(this.statsScopeStmt.get()?.channels ?? 0),
+        chatsScanned: Number(scopeStats.chats ?? 0),
+        chatMessagesScanned: Number(scopeStats.chats ?? 0),
+        channelsScanned: Number(scopeStats.channels ?? 0),
+        channelMessagesScanned: Number(scopeStats.channels ?? 0),
         totalCandidates: matched.length
       },
       limitations,
@@ -539,38 +790,9 @@ export class TeamsIndex {
     };
   }
 
-  getMessageById(messageId) {
+  getMessageById(messageId: string): TeamsIndexedMessage | null {
     this.initialize();
-    const row = this.getMessageByIdStmt.get(String(messageId ?? "").trim());
+    const row = this.getMessageByIdStmt.get(String(messageId ?? "").trim()) as TeamsMessageRow | undefined;
     return row ? mapRow(row) : null;
   }
-}
-
-function isSameMessage(existing, row) {
-  return (
-    String(existing.source_type ?? "") === String(row.sourceType ?? "") &&
-    String(existing.from_name ?? "") === String(row.from ?? "") &&
-    String(existing.created_at ?? "") === String(row.createdDateTime ?? "") &&
-    String(existing.importance ?? "") === String(row.importance ?? "") &&
-    String(existing.web_url ?? "") === String(row.webUrl ?? "") &&
-    String(existing.subject ?? "") === String(row.subject ?? "") &&
-    String(existing.summary ?? "") === String(row.summary ?? "") &&
-    String(existing.body_preview ?? "") === String(row.bodyPreview ?? "") &&
-    String(existing.chat_id ?? "") === String(row.chatId ?? "") &&
-    String(existing.chat_topic ?? "") === String(row.chatTopic ?? "") &&
-    String(existing.team_id ?? "") === String(row.teamId ?? "") &&
-    String(existing.team_name ?? "") === String(row.teamName ?? "") &&
-    String(existing.channel_id ?? "") === String(row.channelId ?? "") &&
-    String(existing.channel_name ?? "") === String(row.channelName ?? "")
-  );
-}
-
-function maxTimestamp(values = []) {
-  let max = 0;
-  for (const value of values) {
-    const ts = new Date(value).getTime();
-    if (!Number.isNaN(ts) && ts > max) max = ts;
-  }
-  if (!max) return "";
-  return new Date(max).toISOString();
 }

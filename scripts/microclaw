@@ -20,11 +20,12 @@ is_running() {
 }
 
 start_daemon() {
+  local extra_args=("$@")
   if is_running; then
     echo "micro-claw already running (pid $(cat "$PID_FILE"))"
     return 0
   fi
-  nohup bash -lc "cd '$ROOT_DIR' && exec npx tsx '$ROOT_DIR/src/cli.ts' run" >"$LOG_FILE" 2>&1 &
+  nohup bash -lc "cd '$ROOT_DIR' && exec npm run run -- ${extra_args[*]:-}" >"$LOG_FILE" 2>&1 &
   local pid=$!
   echo "$pid" >"$PID_FILE"
   echo "micro-claw started in daemon mode (pid $pid)"
@@ -56,40 +57,66 @@ stop_daemon() {
 show_help() {
   cat <<'EOF'
 Usage:
-  microclaw run
-  microclaw up
+  microclaw run [--profile <name>]
+  microclaw up [--profile <name>]
+  microclaw down
   microclaw check
   microclaw build
+  microclaw rebuild
+  microclaw update
   microclaw start [--daemon]
   microclaw stop
   microclaw restart [--daemon]
   microclaw status
   microclaw logs
+  microclaw help
+
+Notes:
+  - up: doctor then interactive run.
+  - down: stop daemon mode if running.
+  - rebuild: run the full build summary.
+  - update: safe local refresh (npm install + build), no git pull.
 EOF
 }
 
 case "$CMD" in
+  run)
+    shift || true
+    cd "$ROOT_DIR"
+    exec npm run run -- "$@"
+    ;;
   up)
     shift || true
     cd "$ROOT_DIR"
-    npx tsx "$ROOT_DIR/src/cli.ts" doctor "$@"
-    exec npx tsx "$ROOT_DIR/src/cli.ts" run "$@"
+    npm run doctor -- "$@"
+    exec npm run run -- "$@"
+    ;;
+  down)
+    stop_daemon
     ;;
   check)
     shift || true
     cd "$ROOT_DIR"
-    exec npx tsx "$ROOT_DIR/src/cli.ts" check "$@"
+    exec npm run check -- "$@"
     ;;
   build|rebuild)
-    (cd "$ROOT_DIR" && npx tsx scripts/build.ts)
+    shift || true
+    cd "$ROOT_DIR"
+    exec npm run build -- "$@"
+    ;;
+  update)
+    shift || true
+    cd "$ROOT_DIR"
+    exec npm run update -- "$@"
     ;;
   start)
     shift || true
     if [[ "${1:-}" == "--daemon" ]]; then
-      start_daemon
+      shift || true
+      start_daemon "$@"
     else
       cd "$ROOT_DIR"
-      exec npx tsx "$ROOT_DIR/src/cli.ts" run "$@"
+      exec npm run run -- "$@"
     fi
     ;;
   stop)
@@ -99,10 +126,11 @@ case "$CMD" in
     shift || true
     stop_daemon
     if [[ "${1:-}" == "--daemon" ]]; then
-      start_daemon
+      shift || true
+      start_daemon "$@"
     else
       cd "$ROOT_DIR"
-      exec npx tsx "$ROOT_DIR/src/cli.ts" run "$@"
+      exec npm run run -- "$@"
     fi
     ;;
   status)
@@ -122,6 +150,6 @@ case "$CMD" in
     ;;
   *)
     cd "$ROOT_DIR"
-    exec npx tsx "$ROOT_DIR/src/cli.ts" "$@"
+    exec npm run run -- "$CMD" "$@"
     ;;
 esac

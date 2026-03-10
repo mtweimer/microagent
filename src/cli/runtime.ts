@@ -1,13 +1,14 @@
-// @ts-nocheck
 import readline from "node:readline";
+import type { Interface } from "node:readline";
 import { Dispatcher } from "../core/dispatcher.js";
 import { FileBackedTranslationCache } from "../core/fileCache.js";
 import { createMemoryStore } from "../core/memoryFactory.js";
 import { loadEnvFile } from "../core/env.js";
-import { applyProfileToEnv, loadProfile } from "../core/profile.js";
+import { applyProfileToEnv, loadProfile, type MicroClawProfile } from "../core/profile.js";
 import { ModelGateway } from "../providers/modelGateway.js";
 import { createDefaultAgents, getAgentCatalog } from "../agents/catalog.js";
 import { createGraphClient } from "../graph/factory.js";
+import type { GraphClient } from "../graph/graphClient.js";
 import { loadPersonaContext } from "../core/personaContext.js";
 import { NarrativeMemory } from "../core/narrativeMemory.js";
 import { validateActionEnvelope, getRegistryVersion } from "../core/schema.js";
@@ -24,26 +25,218 @@ import {
   updateSessionRefsFromExecution,
   updateSessionRefsFromReview
 } from "../core/dispatcherPipeline/sessionRefs.js";
+import type {
+  ActionEnvelope,
+  AnyRecord,
+  DispatcherArtifacts,
+  DispatcherResponse,
+  EvidenceItem,
+  RiskLevel,
+  SessionRefs,
+  SuggestedAction,
+  TriageItem
+} from "../core/contracts.js";
 
-export async function buildRuntime(profileName = "default") {
+type ProviderName = "ollama" | "openai" | "azure-openai" | "anthropic";
+type TeamsWindow = "today" | "48h" | "7d" | "30d" | "all";
+type TeamsSurface = "chats" | "channels" | "both";
+type TeamsDepth = "fast" | "balanced" | "deep" | "full";
+type TeamsImportance = "normal" | "high" | "";
+
+interface GraphStateDisabled {
+  enabled: false;
+  reason: string;
+  client: null;
+}
+
+interface GraphStateEnabled {
+  enabled: true;
+  client: GraphClient;
+}
+
+type RuntimeGraphState = GraphStateDisabled | GraphStateEnabled;
+
+interface TeamsRetrievalRuntimeConfig {
+  retentionDays: number;
+  deltaLookbackHours: number;
+  deltaIntervalMs: number;
+  ranking: AnyRecord;
+  window: string;
+  surface: string;
+  depth: string;
+  top: unknown;
+  team: unknown;
+  channel: unknown;
+  sender: unknown;
+  since: unknown;
+  until: unknown;
+  importance: unknown;
+}
+
+interface ConversationRuntimeConfig {
+  composer: AnyRecord;
+  budget: AnyRecord;
+  quality: AnyRecord;
+}
+
+interface PendingClarification {
+  originalInput: string;
+  options: string[];
+}
+
+interface PendingRetry {
+  prompt: string;
+  reason: string;
+}
+
+interface TeamsCoverageSummary {
+  action: string;
+  params: AnyRecord;
+  coverage: AnyRecord | null;
+  limitations: string[];
+  timestamp: string;
+}
+
+interface TeamsProbeSummaryRow {
+  ok: boolean;
+  endpoint: string | null;
+  count: number | null;
+  skipped: boolean;
+  empty: boolean;
+  error: string | null;
+  reason: string | null;
+}
+
+type TeamsProbeSummary = Record<string, TeamsProbeSummaryRow | unknown>;
+
+interface RuntimeState {
+  profile: MicroClawProfile;
+  profilePath: string;
+  envInfo: ReturnType<typeof loadEnvFile>;
+  agentCatalog: Awaited<ReturnType<typeof getAgentCatalog>>;
+  dispatcher: Dispatcher;
+  modelGateway: ModelGateway;
+  memory: ReturnType<typeof createMemoryStore>;
+  cache: FileBackedTranslationCache;
+  patternCache: FileBackedPatternCache;
+  grammarStore: FileBackedGrammarStore;
+  graphState: RuntimeGraphState;
+  teamsIndex: TeamsIndex;
+  entityGraph: EntityGraph;
+  personaContext: ReturnType<typeof loadPersonaContext>;
+  narrativeMemory: NarrativeMemory;
+  personaOverlayManager: PersonaOverlayManager;
+  _teamsSyncTimer?: ReturnType<typeof setInterval>;
+}
+
+interface ExecuteSuggestionInput {
+  suggestion: SuggestedAction;
+  dispatcher: Dispatcher;
+  memory: ReturnType<typeof createMemoryStore>;
+  modelGateway: ModelGateway;
+  graphState: RuntimeGraphState;
+  teamsIndex: TeamsIndex;
+  entityGraph: EntityGraph;
+}
+
+interface ExecuteDirectActionInput {
+  input: string;
+  envelope: ActionEnvelope;
+  dispatcher: Dispatcher;
+  memory: ReturnType<typeof createMemoryStore>;
+  modelGateway: ModelGateway;
+  graphState: RuntimeGraphState;
+  narrativeMemory: NarrativeMemory;
+  teamsIndex: TeamsIndex;
+  entityGraph: EntityGraph;
+}
+
+function asRecord(value: unknown): AnyRecord {
+  return typeof value === "object" && value !== null ? (value as AnyRecord) : {};
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function hasGraphClient(state: RuntimeGraphState): state is GraphStateEnabled {
+  return state.enabled && state.client !== null;
+}
+
+function hasStats(memory: ReturnType<typeof createMemoryStore>): memory is ReturnType<typeof createMemoryStore> & {
+  stats: () => AnyRecord;
+} {
+  return typeof (memory as { stats?: unknown }).stats === "function";
+}
+
+function isDispatcherResponse(value: unknown): value is DispatcherResponse {
+  return typeof value === "object" && value !== null && "requestId" in value && "status" in value;
+}
+
+function getTeamsRetrievalConfig(profile: MicroClawProfile): TeamsRetrievalRuntimeConfig {
+  const retrieval = asRecord(profile.retrieval);
+  const teams = asRecord(retrieval.teams);
+  return {
+    retentionDays: Number(teams.retentionDays ?? 180),
+    deltaLookbackHours: Number(teams.deltaLookbackHours ?? 6),
+    deltaIntervalMs: Number(teams.deltaIntervalMs ?? 10 * 60 * 1000),
+    ranking: asRecord(teams.ranking),
+    window: String(teams.window ?? "30d"),
+    surface: String(teams.surface ?? "both"),
+    depth: String(teams.depth ?? "balanced"),
+    top: teams.top ?? 30,
+    team: teams.team,
+    channel: teams.channel,
+    sender: teams.sender,
+    since: teams.since,
+    until: teams.until,
+    importance: teams.importance
+  };
+}
+
+function getConversationConfig(profile: MicroClawProfile): ConversationRuntimeConfig {
+  const conversation = asRecord(profile.conversation);
+  return {
+    composer: asRecord(conversation.composer),
+    budget: asRecord(conversation.budget),
+    quality: asRecord(conversation.quality)
+  };
+}
+
+function triageItemsFromOutput(output: DispatcherResponse | null): TriageItem[] {
+  const triage = asRecord(output?.artifacts).triageItems;
+  return Array.isArray(triage) ? (triage as TriageItem[]) : [];
+}
+
+export async function buildRuntime(profileName = "default"): Promise<RuntimeState> {
   const envInfo = loadEnvFile(".env");
   const { profile, filePath } = loadProfile(profileName);
   applyProfileToEnv(profile, process.env);
+  const teamsRetrievalConfig = getTeamsRetrievalConfig(profile);
+  const conversationConfig = getConversationConfig(profile);
 
   const modelGateway = new ModelGateway(process.env);
   const memory = createMemoryStore(profile);
   const cache = new FileBackedTranslationCache(`./data/cache-${profileName}.json`);
   const patternCache = new FileBackedPatternCache(`./data/pattern-cache-${profileName}.json`);
   const grammarStore = new FileBackedGrammarStore(`./data/grammars-${profileName}.json`);
-  const graphState = createGraphClient(profile, process.env);
+  const rawGraphState = createGraphClient(profile, process.env);
+  const graphState: RuntimeGraphState =
+    rawGraphState.enabled && rawGraphState.client
+      ? { enabled: true, client: rawGraphState.client }
+      : {
+          enabled: false,
+          reason: rawGraphState.reason ?? "Graph client unavailable",
+          client: null
+        };
   const personaContext = loadPersonaContext(profileName);
   const narrativeMemory = new NarrativeMemory(`./data/narrative-${profileName}.jsonl`);
   const personaOverlayManager = new PersonaOverlayManager(profileName);
   const teamsIndex = new TeamsIndex({
     dbPath: `./data/teams-index-${profileName}.sqlite`,
-    retentionDays: profile?.retrieval?.teams?.retentionDays ?? 180,
-    deltaLookbackHours: profile?.retrieval?.teams?.deltaLookbackHours ?? 6,
-    deltaIntervalMs: profile?.retrieval?.teams?.deltaIntervalMs ?? 10 * 60 * 1000
+    retentionDays: teamsRetrievalConfig.retentionDays,
+    deltaLookbackHours: teamsRetrievalConfig.deltaLookbackHours,
+    deltaIntervalMs: teamsRetrievalConfig.deltaIntervalMs
   });
   teamsIndex.initialize();
   const entityGraph = new EntityGraph(`./data/entity-graph-${profileName}.sqlite`);
@@ -62,23 +255,23 @@ export async function buildRuntime(profileName = "default") {
     memory,
     cache,
     modelGateway,
-    graphClient: graphState.enabled ? graphState.client : undefined,
+    graphClient: graphState.client,
     teamsIndex,
-    teamsRankingConfig: profile?.retrieval?.teams?.ranking ?? {},
+    teamsRankingConfig: teamsRetrievalConfig.ranking,
     entityGraph,
     personaContext,
-    narrativeMemory,
-    patternCache,
-    grammarStore,
+    narrativeMemory: narrativeMemory as unknown as NonNullable<RuntimeState["dispatcher"]["narrativeMemory"]>,
+    patternCache: patternCache as unknown as AnyRecord,
+    grammarStore: grammarStore as unknown as AnyRecord,
     personaOverlayManager,
     cacheConfig: {
       enabled: profile.cache?.enabled !== false,
       grammarSystem: profile.cache?.grammarSystem ?? "completionBased"
     },
     composerConfig: {
-      ...(profile.conversation?.composer ?? {}),
-      budget: profile.conversation?.budget ?? {},
-      quality: profile.conversation?.quality ?? {}
+      ...conversationConfig.composer,
+      budget: conversationConfig.budget,
+      quality: conversationConfig.quality
     }
   });
 
@@ -119,16 +312,15 @@ export async function runInteractive(profileName = "default") {
     narrativeMemory
   } =
     runtime;
-  let lastOutput = null;
-  let pendingSuggestionId = null;
-  let pendingClarification = null;
-  let pendingRetry = null;
-  let lastTeamsCoverage = null;
-  const maxAutoApplyRisk = String(
-    profile?.safety?.suggestionPolicy?.maxAutoApplyRisk ?? "low"
-  ).toLowerCase();
+  const teamsRetrievalConfig = getTeamsRetrievalConfig(profile);
+  let lastOutput: DispatcherResponse | null = null;
+  let pendingSuggestionId: string | null = null;
+  let pendingClarification: PendingClarification | null = null;
+  let pendingRetry: PendingRetry | null = null;
+  let lastTeamsCoverage: TeamsCoverageSummary | null = null;
+  const maxAutoApplyRisk = String(profile?.safety?.suggestionPolicy?.maxAutoApplyRisk ?? "low").toLowerCase();
 
-  const rl = readline.createInterface({
+  const rl: Interface = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
     prompt: `micro-claw(${profile.name})> `
@@ -213,7 +405,7 @@ export async function runInteractive(profileName = "default") {
         return rl.prompt();
       }
       pendingSuggestionId = null;
-      lastOutput = applied.output;
+      lastOutput = applied.output ?? null;
       printOutput(applied.output);
       return rl.prompt();
     }
@@ -225,7 +417,7 @@ export async function runInteractive(profileName = "default") {
     }
 
     if (input === "/provider list") {
-      const providers = ["ollama", "openai", "azure-openai", "anthropic"];
+      const providers: ProviderName[] = ["ollama", "openai", "azure-openai", "anthropic"];
       const rows = await Promise.all(providers.map(async (p) => modelGateway.healthCheck(p)));
       console.log(JSON.stringify(rows, null, 2));
       return rl.prompt();
@@ -238,12 +430,12 @@ export async function runInteractive(profileName = "default") {
     }
 
     if (input.startsWith("/provider use ")) {
-      const provider = input.slice("/provider use ".length).trim();
+      const provider = input.slice("/provider use ".length).trim() as ProviderName;
       try {
         modelGateway.setActiveProvider(provider);
         console.log(JSON.stringify({ provider, model: modelGateway.getActiveModel(provider) }, null, 2));
       } catch (error) {
-        console.log(`error: ${error.message}`);
+        console.log(`error: ${errorMessage(error)}`);
       }
       return rl.prompt();
     }
@@ -270,7 +462,7 @@ export async function runInteractive(profileName = "default") {
         const models = await modelGateway.listModels(p);
         console.log(JSON.stringify({ provider: p, current: modelGateway.getActiveModel(p), models }, null, 2));
       } catch (error) {
-        console.log(`error: ${error.message}`);
+        console.log(`error: ${errorMessage(error)}`);
       }
       return rl.prompt();
     }
@@ -292,7 +484,7 @@ export async function runInteractive(profileName = "default") {
             return rl.prompt();
           }
         } catch (error) {
-          console.log(`error: ${error.message}`);
+          console.log(`error: ${errorMessage(error)}`);
           return rl.prompt();
         }
       }
@@ -336,7 +528,7 @@ export async function runInteractive(profileName = "default") {
           console.log(`Pending retry available. Say 'retry' to run: ${pendingRetry.prompt}`);
         }
       } catch (error) {
-        console.log(`Graph login failed: ${error.message}`);
+        console.log(`Graph login failed: ${errorMessage(error)}`);
       }
       return rl.prompt();
     }
@@ -356,7 +548,7 @@ export async function runInteractive(profileName = "default") {
           id: me.id
         }, null, 2));
       } catch (error) {
-        console.log(`Graph whoami failed: ${error.message}`);
+        console.log(`Graph whoami failed: ${errorMessage(error)}`);
       }
       return rl.prompt();
     }
@@ -385,7 +577,7 @@ export async function runInteractive(profileName = "default") {
           .map((s) => s.toLowerCase().trim())
           .filter(Boolean)
       );
-  const status = {
+      const status: AnyRecord = {
         graphEnabled: graphState.enabled,
         teamsAgentLoaded: teamsLoaded,
         requestedScopes: scopes,
@@ -399,7 +591,7 @@ export async function runInteractive(profileName = "default") {
         tokenHasChatRead: tokenScopeSet.has("chat.read"),
         tokenHasTeamReadBasicAll: tokenScopeSet.has("team.readbasic.all"),
         tokenHasChannelMessageReadAll: tokenScopeSet.has("channelmessage.read.all"),
-        ranking: profile?.retrieval?.teams?.ranking ?? {},
+        ranking: teamsRetrievalConfig.ranking,
         tokenExpiresAt: token?.expires_at ?? null,
         probe: null,
         lastCoverage: lastTeamsCoverage
@@ -414,7 +606,7 @@ export async function runInteractive(profileName = "default") {
         } catch (error) {
           status.probe = {
             ok: false,
-            error: String(error.message ?? error)
+            error: errorMessage(error)
           };
         }
       }
@@ -435,7 +627,7 @@ export async function runInteractive(profileName = "default") {
           raw: probe
         }, null, 2));
       } catch (error) {
-        console.log(JSON.stringify({ ok: false, error: String(error.message ?? error) }, null, 2));
+        console.log(JSON.stringify({ ok: false, error: errorMessage(error) }, null, 2));
       }
       return rl.prompt();
     }
@@ -481,7 +673,7 @@ export async function runInteractive(profileName = "default") {
         depth: "balanced",
         window: "all",
         mode: "delta",
-        deltaLookbackHours: profile?.retrieval?.teams?.deltaLookbackHours ?? 6
+        deltaLookbackHours: teamsRetrievalConfig.deltaLookbackHours
       });
       console.log(JSON.stringify(synced, null, 2));
       return rl.prompt();
@@ -503,16 +695,16 @@ export async function runInteractive(profileName = "default") {
         action: "search_messages",
         params: {
           query: text,
-          window: normalizeTeamsWindowArg(args.window, "30d"),
-          surface: normalizeTeamsSurfaceArg(args.surface, "both"),
-          depth: normalizeTeamsDepthArg(args.depth, "balanced"),
-          top: normalizeTeamsTopArg(args.top, 30),
-          team: normalizeTeamsScopeArg(args.team),
-          channel: normalizeTeamsScopeArg(args.channel),
-          sender: normalizeTeamsScopeArg(args.sender),
-          since: String(args.since ?? "").trim(),
-          until: String(args.until ?? "").trim(),
-          importance: normalizeTeamsImportanceArg(args.importance)
+          window: normalizeTeamsWindowArg(args.window, normalizeTeamsWindowArg(teamsRetrievalConfig.window, "30d")),
+          surface: normalizeTeamsSurfaceArg(args.surface, normalizeTeamsSurfaceArg(teamsRetrievalConfig.surface, "both")),
+          depth: normalizeTeamsDepthArg(args.depth, normalizeTeamsDepthArg(teamsRetrievalConfig.depth, "balanced")),
+          top: normalizeTeamsTopArg(args.top, normalizeTeamsTopArg(teamsRetrievalConfig.top, 30)),
+          team: normalizeTeamsScopeArg(args.team ?? teamsRetrievalConfig.team),
+          channel: normalizeTeamsScopeArg(args.channel ?? teamsRetrievalConfig.channel),
+          sender: normalizeTeamsScopeArg(args.sender ?? teamsRetrievalConfig.sender),
+          since: String(args.since ?? teamsRetrievalConfig.since ?? "").trim(),
+          until: String(args.until ?? teamsRetrievalConfig.until ?? "").trim(),
+          importance: normalizeTeamsImportanceArg(args.importance ?? teamsRetrievalConfig.importance)
         },
         confidence: 1,
         requiresConfirmation: false
@@ -528,7 +720,7 @@ export async function runInteractive(profileName = "default") {
         teamsIndex,
         entityGraph
       });
-      lastOutput = output;
+      lastOutput = output ?? null;
       lastTeamsCoverage = extractTeamsCoverage(output);
       printOutput(output);
       return rl.prompt();
@@ -543,10 +735,10 @@ export async function runInteractive(profileName = "default") {
         agent: "ms.teams",
         action: "review_my_day",
         params: {
-          window: normalizeTeamsWindowArg(args.window, "today"),
-          surface: normalizeTeamsSurfaceArg(args.surface, "both"),
-          depth: normalizeTeamsDepthArg(args.depth, "balanced"),
-          top: normalizeTeamsTopArg(args.top, 30)
+          window: normalizeTeamsWindowArg(args.window, normalizeTeamsWindowArg(teamsRetrievalConfig.window, "today")),
+          surface: normalizeTeamsSurfaceArg(args.surface, normalizeTeamsSurfaceArg(teamsRetrievalConfig.surface, "both")),
+          depth: normalizeTeamsDepthArg(args.depth, normalizeTeamsDepthArg(teamsRetrievalConfig.depth, "balanced")),
+          top: normalizeTeamsTopArg(args.top, normalizeTeamsTopArg(teamsRetrievalConfig.top, 30))
         },
         confidence: 1,
         requiresConfirmation: false
@@ -562,7 +754,7 @@ export async function runInteractive(profileName = "default") {
         teamsIndex,
         entityGraph
       });
-      lastOutput = output;
+      lastOutput = output ?? null;
       lastTeamsCoverage = extractTeamsCoverage(output);
       printOutput(output);
       return rl.prompt();
@@ -575,7 +767,7 @@ export async function runInteractive(profileName = "default") {
     }
 
     if (input === "/memory stats") {
-      const stats = typeof memory.stats === "function" ? memory.stats() : { backend: "unknown" };
+      const stats = hasStats(memory) ? memory.stats() : { backend: "unknown" };
       console.log(JSON.stringify(stats, null, 2));
       return rl.prompt();
     }
@@ -666,7 +858,7 @@ export async function runInteractive(profileName = "default") {
         profile: profile.name,
         provider: modelGateway.getActiveProvider(),
         model: modelGateway.getActiveModel(),
-        memoryBackend: memory.stats ? memory.stats().backend : "inmemory",
+        memoryBackend: hasStats(memory) ? memory.stats().backend : "inmemory",
         graphEnabled: graphState.enabled,
         agentsLoaded: dispatcher.agents.map((a) => a.id),
         narrativeEntries: narrativeMemory.stats().entries,
@@ -704,7 +896,7 @@ export async function runInteractive(profileName = "default") {
         return rl.prompt();
       }
       const out = await dispatcher.route(prompt);
-      lastOutput = out;
+      lastOutput = out ?? null;
       printOutput(out);
       if (out?.composer) {
         console.log("");
@@ -749,9 +941,9 @@ export async function runInteractive(profileName = "default") {
         });
         dispatcher.sessionRefs = updateSessionRefsFromReview(dispatcher.sessionRefs, {
           target: `client:${name}`,
-          triageItems: output?.artifacts?.triageItems ?? []
+          triageItems: triageItemsFromOutput(output)
         });
-        lastOutput = output;
+        lastOutput = output ?? null;
         printOutput(output);
         return rl.prompt();
       }
@@ -769,9 +961,9 @@ export async function runInteractive(profileName = "default") {
         });
         dispatcher.sessionRefs = updateSessionRefsFromReview(dispatcher.sessionRefs, {
           target: `project:${name}`,
-          triageItems: output?.artifacts?.triageItems ?? []
+          triageItems: triageItemsFromOutput(output)
         });
-        lastOutput = output;
+        lastOutput = output ?? null;
         printOutput(output);
         return rl.prompt();
       }
@@ -786,9 +978,9 @@ export async function runInteractive(profileName = "default") {
       });
       dispatcher.sessionRefs = updateSessionRefsFromReview(dispatcher.sessionRefs, {
         target,
-        triageItems: output?.artifacts?.triageItems ?? []
+        triageItems: triageItemsFromOutput(output)
       });
-      lastOutput = output;
+      lastOutput = output ?? null;
       printOutput(output);
       return rl.prompt();
     }
@@ -833,7 +1025,7 @@ export async function runInteractive(profileName = "default") {
         return rl.prompt();
       }
       pendingSuggestionId = null;
-      lastOutput = applied.output;
+      lastOutput = applied.output ?? null;
       printOutput(applied.output);
       return rl.prompt();
     }
@@ -874,7 +1066,7 @@ export async function runInteractive(profileName = "default") {
         return rl.prompt();
       }
       pendingSuggestionId = null;
-      lastOutput = applied.output;
+      lastOutput = applied.output ?? null;
       printOutput(applied.output);
       return rl.prompt();
     }
@@ -915,7 +1107,7 @@ export async function runInteractive(profileName = "default") {
           console.log(applied.error);
           return rl.prompt();
         }
-        lastOutput = applied.output;
+        lastOutput = applied.output ?? null;
         printOutput(applied.output);
         return rl.prompt();
       }
@@ -937,10 +1129,14 @@ export async function runInteractive(profileName = "default") {
       output?.status === "clarify"
         ? {
             originalInput: input,
-            options: output?.artifacts?.clarification?.options ?? []
+            options: Array.isArray(asRecord(output?.artifacts).clarification)
+              ? []
+              : Array.isArray(asRecord(asRecord(output?.artifacts).clarification).options)
+                ? (asRecord(asRecord(output?.artifacts).clarification).options as string[]).map((option) => String(option))
+                : []
           }
         : null;
-    lastOutput = output;
+    lastOutput = output ?? null;
     lastTeamsCoverage = extractTeamsCoverage(output);
     printOutput(output);
     rl.prompt();
@@ -952,7 +1148,7 @@ export async function runInteractive(profileName = "default") {
     process.exit(0);
   });
 
-  const scheduleMs = Number(profile?.retrieval?.teams?.deltaIntervalMs ?? teamsIndex.getConfig().syncIntervalMs);
+  const scheduleMs = Number(teamsRetrievalConfig.deltaIntervalMs ?? teamsIndex.getConfig().syncIntervalMs);
   if (graphState.enabled && Number.isFinite(scheduleMs) && scheduleMs > 0) {
     runtime._teamsSyncTimer = setInterval(async () => {
       try {
@@ -962,7 +1158,7 @@ export async function runInteractive(profileName = "default") {
           depth: "balanced",
           window: "all",
           mode: "delta",
-          deltaLookbackHours: profile?.retrieval?.teams?.deltaLookbackHours ?? 6
+          deltaLookbackHours: teamsRetrievalConfig.deltaLookbackHours
         });
       } catch {
         // best effort background sync
@@ -971,7 +1167,7 @@ export async function runInteractive(profileName = "default") {
   }
 }
 
-function printOutput(output) {
+function printOutput(output: DispatcherResponse | null): void {
   if (output?.finalText) {
     console.log(output.finalText);
     const isChat = output?.conversationMode === "chat";
@@ -1001,45 +1197,47 @@ function printOutput(output) {
   console.log(JSON.stringify(output, null, 2));
 }
 
-function extractTeamsCoverage(output) {
-  const action = output?.artifacts?.action;
-  const result = output?.artifacts?.result;
+function extractTeamsCoverage(output: DispatcherResponse | null): TeamsCoverageSummary | null {
+  const artifacts = asRecord(output?.artifacts);
+  const action = asRecord(artifacts.action);
+  const result = asRecord(artifacts.result);
   if (action?.agent !== "ms.teams") return null;
   return {
-    action: action.action,
-    params: result?.params ?? {},
-    coverage: result?.coverage ?? null,
-    limitations: result?.limitations ?? [],
+    action: String(action.action ?? ""),
+    params: asRecord(result.params),
+    coverage: typeof result.coverage === "object" && result.coverage !== null ? asRecord(result.coverage) : null,
+    limitations: Array.isArray(result.limitations) ? result.limitations.map((item) => String(item)) : [],
     timestamp: new Date().toISOString()
   };
 }
 
-function summarizeTeamsProbe(probe) {
-  const out = {};
-  for (const [key, value] of Object.entries(probe ?? {})) {
+function summarizeTeamsProbe(probe: unknown): TeamsProbeSummary {
+  const out: TeamsProbeSummary = {};
+  for (const [key, value] of Object.entries(asRecord(probe))) {
     if (!value || typeof value !== "object") {
       out[key] = value;
       continue;
     }
+    const row = asRecord(value);
     out[key] = {
-      ok: Boolean(value.ok),
-      endpoint: value.endpoint ?? null,
-      count: value.count ?? null,
-      skipped: Boolean(value.skipped),
-      empty: Boolean(value.empty),
-      error: value.error ?? null,
-      reason: value.reason ?? null
+      ok: Boolean(row.ok),
+      endpoint: typeof row.endpoint === "string" ? row.endpoint : null,
+      count: typeof row.count === "number" ? row.count : null,
+      skipped: Boolean(row.skipped),
+      empty: Boolean(row.empty),
+      error: typeof row.error === "string" ? row.error : null,
+      reason: typeof row.reason === "string" ? row.reason : null
     };
   }
   return out;
 }
 
-function findSuggestion(lastOutput, id) {
+function findSuggestion(lastOutput: DispatcherResponse | null, id: string): SuggestedAction | undefined {
   const items = lastOutput?.suggestedActions ?? [];
   return items.find((s) => s.id === id || `${s.id}` === id);
 }
 
-function matchSuggestionInput(lastOutput, input) {
+function matchSuggestionInput(lastOutput: DispatcherResponse | null, input: string): SuggestedAction | null {
   const items = lastOutput?.suggestedActions ?? [];
   if (!Array.isArray(items) || items.length === 0) return null;
   const norm = normalizeSuggestionText(input);
@@ -1052,7 +1250,15 @@ function matchSuggestionInput(lastOutput, input) {
   return null;
 }
 
-async function executeSuggestion({ suggestion, dispatcher, memory, modelGateway, graphState, teamsIndex, entityGraph }) {
+async function executeSuggestion({
+  suggestion,
+  dispatcher,
+  memory,
+  modelGateway,
+  graphState,
+  teamsIndex,
+  entityGraph
+}: ExecuteSuggestionInput): Promise<{ output: DispatcherResponse | null; error: string | null }> {
   const envelope = {
     requestId: crypto.randomUUID(),
     schemaVersion: getRegistryVersion(),
@@ -1063,14 +1269,14 @@ async function executeSuggestion({ suggestion, dispatcher, memory, modelGateway,
     requiresConfirmation: suggestion.risk !== "low"
   };
   const valid = validateActionEnvelope(envelope);
-  if (!valid.ok) return { error: `Cannot apply suggestion: ${valid.errors.join(", ")}` };
+  if (!valid.ok) return { output: null, error: `Cannot apply suggestion: ${valid.errors.join(", ")}` };
   const agent = dispatcher.agents.find((a) => a.id === envelope.agent);
-  if (!agent) return { error: `No agent available for ${envelope.agent}` };
+  if (!agent) return { output: null, error: `No agent available for ${envelope.agent}` };
 
   const result = await agent.execute(envelope, {
     memory,
     modelGateway,
-    graphClient: graphState.enabled ? graphState.client : undefined,
+    graphClient: graphState.client,
     teamsIndex,
     teamsRankingConfig: dispatcher.teamsRankingConfig ?? {},
     entityGraph
@@ -1078,6 +1284,7 @@ async function executeSuggestion({ suggestion, dispatcher, memory, modelGateway,
   dispatcher.sessionRefs = updateSessionRefsFromExecution(dispatcher.sessionRefs, envelope, result);
   entityGraph?.observeExecution(envelope, result.artifacts ?? {});
   return {
+    error: null,
     output: {
       requestId: envelope.requestId,
       status: result.status,
@@ -1089,6 +1296,7 @@ async function executeSuggestion({ suggestion, dispatcher, memory, modelGateway,
       },
       finalText: `Applied suggestion ${suggestion.id}: ${result.message}`,
       suggestedActions: [],
+      memoryRefs: [],
       trace: dispatcher.buildTrace({
         traceId: crypto.randomUUID(),
         requestId: envelope.requestId,
@@ -1103,18 +1311,18 @@ async function executeSuggestion({ suggestion, dispatcher, memory, modelGateway,
   };
 }
 
-function riskValue(risk) {
+function riskValue(risk: string): number {
   const r = String(risk ?? "medium").toLowerCase();
   if (r === "low") return 1;
   if (r === "medium") return 2;
   return 3;
 }
 
-function isRiskAtMost(risk, maxRisk) {
+function isRiskAtMost(risk: string, maxRisk: string): boolean {
   return riskValue(risk) <= riskValue(maxRisk);
 }
 
-function printSuggestionDetails(suggestion) {
+function printSuggestionDetails(suggestion: SuggestedAction): void {
   const envelope = suggestion.actionEnvelope ?? {};
   console.log(`Suggestion [${suggestion.id}]`);
   console.log(`title: ${suggestion.title}`);
@@ -1131,23 +1339,24 @@ function printSuggestionDetails(suggestion) {
   }
 }
 
-function summarizeEvidenceDetails(details) {
+function summarizeEvidenceDetails(details: unknown): string {
   if (!details || typeof details !== "object") return "";
   const keys = Object.keys(details);
   if (keys.length === 0) return "";
-  const sample = {};
-  for (const key of keys.slice(0, 5)) sample[key] = details[key];
+  const sample: AnyRecord = {};
+  const record = details as AnyRecord;
+  for (const key of keys.slice(0, 5)) sample[key] = record[key];
   return JSON.stringify(sample);
 }
 
-function normalizeSuggestionText(value) {
+function normalizeSuggestionText(value: unknown): string {
   return String(value ?? "")
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
 }
 
-function isRetryReply(input) {
+function isRetryReply(input: string): boolean {
   const lower = String(input ?? "").trim().toLowerCase();
   return [
     "retry",
@@ -1161,7 +1370,7 @@ function isRetryReply(input) {
   ].includes(lower);
 }
 
-function shouldOfferRetry(output, input) {
+function shouldOfferRetry(output: DispatcherResponse | null, input: string): boolean {
   if (!output || output.status !== "error") return false;
   const msg = String(output.message ?? "").toLowerCase();
   const hasAction = Boolean(output.artifacts?.action);
@@ -1170,19 +1379,19 @@ function shouldOfferRetry(output, input) {
   return Boolean(String(input ?? "").trim());
 }
 
-function isDomainResolutionReply(input, pendingClarification) {
+function isDomainResolutionReply(input: string, pendingClarification: PendingClarification | null): boolean {
   const value = String(input ?? "").toLowerCase().trim();
   if (!value) return false;
   const known = ["outlook", "calendar", "teams", "sharepoint", "onedrive"];
   if (known.includes(value)) return true;
   const options = Array.isArray(pendingClarification?.options)
-    ? pendingClarification.options.map((o) => String(o).toLowerCase())
+    ? pendingClarification.options.map((o: string) => String(o).toLowerCase())
     : [];
   return options.includes(value);
 }
 
-function parseKeyValueArgs(input) {
-  const args = {};
+function parseKeyValueArgs(input: string): { text: string; args: Record<string, string> } {
+  const args: Record<string, string> = {};
   const parts = String(input ?? "").split(/\s+/).filter(Boolean);
   const free = [];
   for (const part of parts) {
@@ -1191,48 +1400,48 @@ function parseKeyValueArgs(input) {
       free.push(part);
       continue;
     }
-    args[m[1].toLowerCase()] = m[2];
+    args[(m[1] ?? "").toLowerCase()] = m[2] ?? "";
   }
   return { text: free.join(" ").trim(), args };
 }
 
-function normalizeTeamsWindowArg(value, fallback) {
+function normalizeTeamsWindowArg(value: unknown, fallback: TeamsWindow): TeamsWindow {
   const v = String(value ?? fallback).toLowerCase();
-  if (["today", "48h", "7d", "30d", "all"].includes(v)) return v;
+  if (["today", "48h", "7d", "30d", "all"].includes(v)) return v as TeamsWindow;
   return fallback;
 }
 
-function normalizeTeamsSurfaceArg(value, fallback) {
+function normalizeTeamsSurfaceArg(value: unknown, fallback: TeamsSurface): TeamsSurface {
   const v = String(value ?? fallback).toLowerCase();
-  if (["chats", "channels", "both"].includes(v)) return v;
+  if (["chats", "channels", "both"].includes(v)) return v as TeamsSurface;
   return fallback;
 }
 
-function normalizeTeamsDepthArg(value, fallback) {
+function normalizeTeamsDepthArg(value: unknown, fallback: TeamsDepth): TeamsDepth {
   const v = String(value ?? fallback).toLowerCase();
-  if (["fast", "balanced", "deep", "full"].includes(v)) return v;
+  if (["fast", "balanced", "deep", "full"].includes(v)) return v as TeamsDepth;
   return fallback;
 }
 
-function normalizeTeamsTopArg(value, fallback) {
+function normalizeTeamsTopArg(value: unknown, fallback: number): number {
   const n = Number(value ?? fallback);
   if (Number.isNaN(n) || n < 1) return fallback;
   return Math.min(100, Math.floor(n));
 }
 
-function formatTeamsScopeDirective(key, value) {
+function formatTeamsScopeDirective(key: string, value: unknown): string {
   const text = String(value ?? "").trim();
   if (!text) return "";
   return `${key}=${text.replace(/\s+/g, "_")} `;
 }
 
-function normalizeTeamsScopeArg(value) {
+function normalizeTeamsScopeArg(value: unknown): string {
   const text = String(value ?? "").trim();
   if (!text) return "";
   return text.replace(/^['"]|['"]$/g, "").replace(/_/g, " ").trim();
 }
 
-function normalizeTeamsImportanceArg(value) {
+function normalizeTeamsImportanceArg(value: unknown): TeamsImportance {
   const v = String(value ?? "").toLowerCase().trim();
   if (v === "high" || v === "normal") return v;
   return "";
@@ -1248,7 +1457,7 @@ async function executeDirectAction({
   narrativeMemory,
   teamsIndex,
   entityGraph
-}) {
+}: ExecuteDirectActionInput): Promise<DispatcherResponse> {
   if (typeof memory?.addTurn === "function") {
     memory.addTurn({ role: "user", text: input, source: "cli" });
   }
@@ -1260,7 +1469,18 @@ async function executeDirectAction({
       status: "error",
       message: `Invalid action: ${valid.errors.join(", ")}`,
       artifacts: { action: envelope, translationSource: "slash", result: {} },
-      suggestedActions: []
+      suggestedActions: [],
+      memoryRefs: [],
+      trace: dispatcher.buildTrace({
+        traceId: crypto.randomUUID(),
+        requestId: envelope.requestId,
+        agent: envelope.agent,
+        cacheHit: false,
+        translationSource: "slash",
+        stageTimingsMs: {},
+        validationErrors: valid.errors,
+        executionError: `Invalid action: ${valid.errors.join(", ")}`
+      })
     };
   }
 
@@ -1271,14 +1491,25 @@ async function executeDirectAction({
       status: "error",
       message: `No agent available for ${envelope.agent}`,
       artifacts: { action: envelope, translationSource: "slash", result: {} },
-      suggestedActions: []
+      suggestedActions: [],
+      memoryRefs: [],
+      trace: dispatcher.buildTrace({
+        traceId: crypto.randomUUID(),
+        requestId: envelope.requestId,
+        agent: envelope.agent,
+        cacheHit: false,
+        translationSource: "slash",
+        stageTimingsMs: {},
+        validationErrors: [],
+        executionError: `No agent available for ${envelope.agent}`
+      })
     };
   }
 
   const execution = await agent.execute(envelope, {
     memory,
     modelGateway,
-    graphClient: graphState.enabled ? graphState.client : undefined,
+    graphClient: graphState.client,
     teamsIndex,
     teamsRankingConfig: dispatcher.teamsRankingConfig ?? {},
     entityGraph
@@ -1296,7 +1527,10 @@ async function executeDirectAction({
     modelGateway,
     composerConfig: dispatcher.composerConfig ?? {},
     memoryEvidence: [],
-    narrativeEntries: typeof narrativeMemory?.summarize === "function" ? narrativeMemory.summarize("session", 5) : []
+    narrativeEntries:
+      typeof narrativeMemory?.summarize === "function"
+        ? (narrativeMemory.summarize("session", 5) as unknown as AnyRecord[])
+        : []
   });
 
   if (typeof memory?.addTurn === "function") {

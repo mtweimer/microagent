@@ -1,14 +1,32 @@
-// @ts-nocheck
 import fs from "node:fs";
 import path from "node:path";
 
-function readTextIfExists(filePath) {
+export interface PersonaContext {
+  soul: string;
+  agent: string;
+  tools: string;
+  overlays: {
+    userContext: string;
+    interactionStyle: string;
+  };
+}
+
+interface PersonaLoadOptions {
+  soulPath?: string;
+  agentPath?: string;
+  toolsPath?: string;
+  overlayRoot?: string;
+  userContextPath?: string;
+  interactionStylePath?: string;
+}
+
+function readTextIfExists(filePath: string): string {
   const resolved = path.resolve(process.cwd(), filePath);
   if (!fs.existsSync(resolved)) return "";
   return fs.readFileSync(resolved, "utf8").trim();
 }
 
-export function loadPersonaContext(profileName = "default", options = {}) {
+export function loadPersonaContext(profileName = "default", options: PersonaLoadOptions = {}): PersonaContext {
   const baseSoul = options.soulPath ?? "config/soul.md";
   const baseAgent = options.agentPath ?? "config/agent.md";
   const baseTools = options.toolsPath ?? "config/tools.md";
@@ -28,8 +46,8 @@ export function loadPersonaContext(profileName = "default", options = {}) {
   };
 }
 
-export function composePersonaInstructions(personaContext) {
-  const sections = [];
+export function composePersonaInstructions(personaContext: PersonaContext | null | undefined): string {
+  const sections: string[] = [];
   if (personaContext?.agent) sections.push(`Agent baseline:\n${personaContext.agent}`);
   if (personaContext?.soul) sections.push(`Voice and style:\n${personaContext.soul}`);
   if (personaContext?.tools) sections.push(`Tool guidelines:\n${personaContext.tools}`);

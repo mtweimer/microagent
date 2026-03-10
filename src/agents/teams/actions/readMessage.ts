@@ -1,5 +1,9 @@
-// @ts-nocheck
-export async function readMessageAction(env, ctx) {
+import type { ActionEnvelope, AgentExecutionContext, AgentExecutionResult } from "../../../core/contracts.js";
+
+export async function readMessageAction(
+  env: ActionEnvelope,
+  ctx: AgentExecutionContext
+): Promise<AgentExecutionResult> {
   const teamsIndex = ctx.teamsIndex;
   const id = String(env.params?.id ?? "").trim();
   if (!id) {

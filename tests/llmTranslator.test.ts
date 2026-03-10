@@ -1,16 +1,13 @@
-// @ts-nocheck
 import test from "node:test";
 import assert from "node:assert/strict";
 
 import { translateRequest } from "../src/core/llmTranslator.js";
+import { makeModelGateway } from "./helpers.js";
 
 test("translateRequest uses model output when valid", async () => {
-  const gateway = {
+  const gateway = makeModelGateway({
     getActiveProvider() {
       return "openai";
-    },
-    checkAuth() {
-      return { ok: true, missing: [] };
     },
     async completeJson() {
       return {
@@ -21,7 +18,7 @@ test("translateRequest uses model output when valid", async () => {
         schemaVersion: "1.0.0"
       };
     }
-  };
+  });
 
   const result = await translateRequest("Schedule design review tomorrow", "calendar", gateway);
   assert.equal(result.source, "llm");
@@ -32,12 +29,9 @@ test("translateRequest uses model output when valid", async () => {
 
 test("translateRequest correction pass recovers invalid first response", async () => {
   let call = 0;
-  const gateway = {
+  const gateway = makeModelGateway({
     getActiveProvider() {
       return "openai";
-    },
-    checkAuth() {
-      return { ok: true, missing: [] };
     },
     async completeJson() {
       call += 1;
@@ -50,7 +44,7 @@ test("translateRequest correction pass recovers invalid first response", async (
         schemaVersion: "1.0.0"
       };
     }
-  };
+  });
 
   const result = await translateRequest("What's on my calendar today?", "calendar", gateway);
   assert.equal(result.source, "llm_corrected");
@@ -58,17 +52,14 @@ test("translateRequest correction pass recovers invalid first response", async (
 });
 
 test("translateRequest falls back to heuristic when invalid after correction", async () => {
-  const gateway = {
+  const gateway = makeModelGateway({
     getActiveProvider() {
       return "openai";
-    },
-    checkAuth() {
-      return { ok: true, missing: [] };
     },
     async completeJson() {
       return { action: "invalid_action", params: {} };
     }
-  };
+  });
 
   const result = await translateRequest("Schedule design review tomorrow", "calendar", gateway);
   assert.equal(result.source, "heuristic");
@@ -77,12 +68,9 @@ test("translateRequest falls back to heuristic when invalid after correction", a
 });
 
 test("translateRequest disambiguates outlook search prompt from send_email", async () => {
-  const gateway = {
+  const gateway = makeModelGateway({
     getActiveProvider() {
       return "openai";
-    },
-    checkAuth() {
-      return { ok: true, missing: [] };
     },
     async completeJson() {
       return {
@@ -93,19 +81,16 @@ test("translateRequest disambiguates outlook search prompt from send_email", asy
         schemaVersion: "1.0.0"
       };
     }
-  };
+  });
 
   const result = await translateRequest("search my email for invoices from microsoft", "outlook", gateway);
   assert.equal(result.envelope.action, "search_email");
 });
 
 test("translateRequest disambiguates outlook follow-up question to read_email", async () => {
-  const gateway = {
+  const gateway = makeModelGateway({
     getActiveProvider() {
       return "openai";
-    },
-    checkAuth() {
-      return { ok: true, missing: [] };
     },
     async completeJson() {
       return {
@@ -116,19 +101,16 @@ test("translateRequest disambiguates outlook follow-up question to read_email", 
         schemaVersion: "1.0.0"
       };
     }
-  };
+  });
 
   const result = await translateRequest("what did they want?", "outlook", gateway);
   assert.equal(result.envelope.action, "read_email");
 });
 
 test("translateRequest disambiguates 'read my last email' to read_email", async () => {
-  const gateway = {
+  const gateway = makeModelGateway({
     getActiveProvider() {
       return "openai";
-    },
-    checkAuth() {
-      return { ok: true, missing: [] };
     },
     async completeJson() {
       return {
@@ -139,19 +121,16 @@ test("translateRequest disambiguates 'read my last email' to read_email", async 
         schemaVersion: "1.0.0"
       };
     }
-  };
+  });
 
   const result = await translateRequest("read my last email for me", "outlook", gateway);
   assert.equal(result.envelope.action, "read_email");
 });
 
 test("translateRequest applies teams directive defaults from input", async () => {
-  const gateway = {
+  const gateway = makeModelGateway({
     getActiveProvider() {
       return "openai";
-    },
-    checkAuth() {
-      return { ok: true, missing: [] };
     },
     async completeJson() {
       return {
@@ -162,7 +141,7 @@ test("translateRequest applies teams directive defaults from input", async () =>
         schemaVersion: "1.0.0"
       };
     }
-  };
+  });
 
   const result = await translateRequest(
     "search teams for valeo window=all surface=channels depth=fast top=55 team=Sync_-_KSM_<>_Hoplite channel=General",
@@ -180,12 +159,9 @@ test("translateRequest applies teams directive defaults from input", async () =>
 });
 
 test("translateRequest forces teams query from explicit input phrase", async () => {
-  const gateway = {
+  const gateway = makeModelGateway({
     getActiveProvider() {
       return "openai";
-    },
-    checkAuth() {
-      return { ok: true, missing: [] };
     },
     async completeJson() {
       return {
@@ -196,7 +172,7 @@ test("translateRequest forces teams query from explicit input phrase", async () 
         schemaVersion: "1.0.0"
       };
     }
-  };
+  });
 
   const result = await translateRequest(
     "search teams for valeo window=all surface=both depth=balanced top=30",

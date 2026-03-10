@@ -1,12 +1,12 @@
 #!/usr/bin/env node
-// @ts-nocheck
 import fs from "node:fs";
 import path from "node:path";
 import { ACTION_REGISTRY_VERSION, ACTION_REGISTRY, listDomains } from "../src/contracts/actionRegistry.js";
+import type { DomainName } from "../src/contracts/actionRegistry.js";
 
 const root = process.cwd();
 
-function expected(shortName, domain) {
+function expected(shortName: string, domain: DomainName): string {
   const cfg = ACTION_REGISTRY[domain];
   return JSON.stringify(
     {
@@ -22,7 +22,7 @@ function expected(shortName, domain) {
   ) + "\n";
 }
 
-function checkOne(shortName, domain) {
+function checkOne(shortName: string, domain: DomainName): { ok: boolean; reason: string } {
   const filePath = path.join(root, "src", "agents", "ms", `${shortName}.schema.generated.json`);
   if (!fs.existsSync(filePath)) {
     return { ok: false, reason: `missing file ${filePath}` };
@@ -38,7 +38,7 @@ function checkOne(shortName, domain) {
 const checks = listDomains()
   .filter((domain) => ACTION_REGISTRY[domain]?.agentId?.startsWith("ms."))
   .map((domain) => {
-    const shortName = ACTION_REGISTRY[domain].agentId.split(".").pop();
+    const shortName = ACTION_REGISTRY[domain].agentId.split(".").pop() ?? domain;
     return { shortName, domain, ...checkOne(shortName, domain) };
   });
 

@@ -1,19 +1,19 @@
-// @ts-nocheck
 import test from "node:test";
 import assert from "node:assert/strict";
 
 import { runReviewOrchestrator } from "../src/core/reviewOrchestrator.js";
 import { buildTriageItems } from "../src/core/triageClassifier.js";
+import { makeDispatcherResponse, makeEnvelope, makeSessionRefs } from "./helpers.js";
 
 test("review orchestrator builds narrative and triage items", async () => {
   const outputs = new Map([
     [
       "what's on my calendar for today",
-      {
+      makeDispatcherResponse({
         status: "ok",
         finalText: "Found 1 event.",
         artifacts: {
-          action: { agent: "ms.calendar", action: "find_events" },
+          action: makeEnvelope({ agent: "ms.calendar", action: "find_events" }),
           result: {
             timeRange: "today",
             events: [
@@ -27,15 +27,15 @@ test("review orchestrator builds narrative and triage items", async () => {
           }
         },
         suggestedActions: []
-      }
+      })
     ],
     [
       "search my email for unread messages today",
-      {
+      makeDispatcherResponse({
         status: "ok",
         finalText: "Found 1 email.",
         artifacts: {
-          action: { agent: "ms.outlook", action: "search_email" },
+          action: makeEnvelope({ agent: "ms.outlook", action: "search_email" }),
           result: {
             messages: [
               {
@@ -48,15 +48,15 @@ test("review orchestrator builds narrative and triage items", async () => {
           }
         },
         suggestedActions: []
-      }
+      })
     ],
     [
       "did i miss anything in teams today?",
-      {
+      makeDispatcherResponse({
         status: "ok",
         finalText: "Reviewed Teams.",
         artifacts: {
-          action: { agent: "ms.teams", action: "review_my_day" },
+          action: makeEnvelope({ agent: "ms.teams", action: "review_my_day" }),
           result: {
             prioritized: [
               {
@@ -70,35 +70,35 @@ test("review orchestrator builds narrative and triage items", async () => {
           }
         },
         suggestedActions: []
-      }
+      })
     ]
   ]);
 
   const dispatcher = {
     agents: [{ id: "ms.calendar" }, { id: "ms.outlook" }, { id: "ms.teams" }],
-    sessionRefs: {},
-    async route(prompt) {
-      return outputs.get(prompt);
+    sessionRefs: makeSessionRefs(),
+    async route(prompt: string) {
+      return outputs.get(prompt) ?? makeDispatcherResponse({ status: "error", message: "missing fixture" });
     }
   };
 
-  const out = await runReviewOrchestrator({ target: "today", dispatcher });
+  const out = await runReviewOrchestrator({ target: "today", dispatcher, entityGraph: null });
   assert.equal(out.status, "ok");
-  assert.match(out.finalText, /reviewed your day/i);
-  assert.equal(Array.isArray(out.artifacts.triageItems), true);
-  assert.equal(out.artifacts.triageItems.length >= 2, true);
-  assert.equal(out.suggestedActions.some((item) => item.actionEnvelope?.action === "read_email"), true);
+  assert.match(out.finalText ?? "", /reviewed your day/i);
+  const triageItems = Array.isArray(out.artifacts.triageItems) ? out.artifacts.triageItems : [];
+  assert.equal(triageItems.length >= 2, true);
+  assert.equal((out.suggestedActions ?? []).some((item) => item.actionEnvelope?.action === "read_email"), true);
 });
 
 test("review orchestrator filters triage items for focused client review", async () => {
   const outputs = new Map([
     [
       "search my email for Valeo",
-      {
+      makeDispatcherResponse({
         status: "ok",
         finalText: "Found 2 emails.",
         artifacts: {
-          action: { agent: "ms.outlook", action: "search_email" },
+          action: makeEnvelope({ agent: "ms.outlook", action: "search_email" }),
           result: {
             messages: [
               {
@@ -117,27 +117,27 @@ test("review orchestrator filters triage items for focused client review", async
           }
         },
         suggestedActions: []
-      }
+      })
     ],
     [
       "what's on my calendar for today",
-      {
+      makeDispatcherResponse({
         status: "ok",
         finalText: "Found 1 event.",
         artifacts: {
-          action: { agent: "ms.calendar", action: "find_events" },
+          action: makeEnvelope({ agent: "ms.calendar", action: "find_events" }),
           result: { timeRange: "today", events: [] }
         },
         suggestedActions: []
-      }
+      })
     ],
     [
       "search teams for Valeo",
-      {
+      makeDispatcherResponse({
         status: "ok",
         finalText: "Found 1 message.",
         artifacts: {
-          action: { agent: "ms.teams", action: "search_messages" },
+          action: makeEnvelope({ agent: "ms.teams", action: "search_messages" }),
           result: {
             hits: [
               {
@@ -151,18 +151,18 @@ test("review orchestrator filters triage items for focused client review", async
           }
         },
         suggestedActions: []
-      }
+      })
     ]
   ]);
   const dispatcher = {
     agents: [{ id: "ms.calendar" }, { id: "ms.outlook" }, { id: "ms.teams" }],
-    sessionRefs: {},
-    async route(prompt) {
-      return outputs.get(prompt);
+    sessionRefs: makeSessionRefs(),
+    async route(prompt: string) {
+      return outputs.get(prompt) ?? makeDispatcherResponse({ status: "error", message: "missing fixture" });
     }
   };
   const entityGraph = {
-    aliasesFor(name) {
+    aliasesFor(name: string) {
       return [name];
     },
     observeExecution() {}
@@ -173,16 +173,17 @@ test("review orchestrator filters triage items for focused client review", async
     entityGraph,
     focus: { kind: "client", name: "Valeo" }
   });
-  assert.match(out.finalText, /client 'Valeo'/i);
-  assert.equal(out.artifacts.triageItems.length, 2);
-  assert.equal(out.artifacts.triageItems.every((item) => /valeo/i.test(JSON.stringify(item))), true);
+  assert.match(out.finalText ?? "", /client 'Valeo'/i);
+  const triageItems = Array.isArray(out.artifacts.triageItems) ? out.artifacts.triageItems : [];
+  assert.equal(triageItems.length, 2);
+  assert.equal(triageItems.every((item) => /valeo/i.test(JSON.stringify(item))), true);
 });
 
 test("triage classifier boosts email and teams items when they overlap with calendar context", () => {
   const items = buildTriageItems([
-    {
+    makeDispatcherResponse({
       artifacts: {
-        action: { agent: "ms.calendar", action: "find_events" },
+        action: makeEnvelope({ agent: "ms.calendar", action: "find_events" }),
         result: {
           events: [
             {
@@ -194,10 +195,10 @@ test("triage classifier boosts email and teams items when they overlap with cale
           ]
         }
       }
-    },
-    {
+    }),
+    makeDispatcherResponse({
       artifacts: {
-        action: { agent: "ms.outlook", action: "search_email" },
+        action: makeEnvelope({ agent: "ms.outlook", action: "search_email" }),
         result: {
           messages: [
             {
@@ -208,10 +209,10 @@ test("triage classifier boosts email and teams items when they overlap with cale
           ]
         }
       }
-    },
-    {
+    }),
+    makeDispatcherResponse({
       artifacts: {
-        action: { agent: "ms.teams", action: "search_messages" },
+        action: makeEnvelope({ agent: "ms.teams", action: "search_messages" }),
         result: {
           hits: [
             {
@@ -224,10 +225,12 @@ test("triage classifier boosts email and teams items when they overlap with cale
           ]
         }
       }
-    }
+    })
   ]);
   const emailItem = items.find((item) => item.sourceDomain === "outlook");
   const teamsItem = items.find((item) => item.sourceDomain === "teams");
+  assert.ok(emailItem);
+  assert.ok(teamsItem);
   assert.match(emailItem.rationale, /current meeting\/client context/i);
   assert.match(teamsItem.rationale, /active client\/project context/i);
 });

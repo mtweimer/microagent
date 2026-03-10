@@ -1,4 +1,3 @@
-// @ts-nocheck
 import test from "node:test";
 import assert from "node:assert/strict";
 
@@ -45,10 +44,7 @@ test("device auth rejects cached token missing required scope", async () => {
     scope: "User.Read"
   });
 
-  await assert.rejects(
-    async () => auth.getAccessToken(),
-    /missing required scopes/i
-  );
+  await assert.rejects(async () => auth.getAccessToken(), /missing required scopes/i);
 
   auth.clear();
 });
@@ -65,10 +61,7 @@ test("device auth with no cache returns not authenticated", async () => {
   });
 
   auth.clear();
-  await assert.rejects(
-    async () => auth.getAccessToken(),
-    /Graph not authenticated/i
-  );
+  await assert.rejects(async () => auth.getAccessToken(), /Graph not authenticated/i);
 });
 
 test("device auth does not enforce oidc helper scopes in token scope string", async () => {

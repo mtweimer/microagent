@@ -1,4 +1,3 @@
-// @ts-nocheck
 import test from "node:test";
 import assert from "node:assert/strict";
 
@@ -16,23 +15,21 @@ test("provider env validation reports missing keys", () => {
 });
 
 test("setProviderModel/getProviderModel roundtrip", () => {
-  const env = {};
+  const env: Record<string, string> = {};
   setProviderModel("openai", "gpt-4.1-mini", env);
   assert.equal(getProviderModel("openai", env), "gpt-4.1-mini");
 });
 
 test("ollama model list is dynamic from installed models", async () => {
-  const fakeFetch = async () => ({
+  const fakeFetch = (async () => ({
     ok: true,
-    async json() {
-      return {
-        models: [
-          { name: "llama3.2:latest" },
-          { name: "qwen2.5-coder:7b" }
-        ]
-      };
-    }
-  });
+    json: async () => ({
+      models: [
+        { name: "llama3.2:latest" },
+        { name: "qwen2.5-coder:7b" }
+      ]
+    })
+  })) as unknown as typeof fetch;
 
   const models = await getAvailableModels("ollama", { OLLAMA_ENDPOINT: "http://localhost:11434" }, fakeFetch);
   assert.deepEqual(models, ["phi3", "llama3.2", "qwen2.5-coder:7b"]);

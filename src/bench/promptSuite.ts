@@ -1,4 +1,3 @@
-// @ts-nocheck
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,14 +11,38 @@ import { OutlookAgent } from "../agents/ms/outlookAgent.js";
 import { CalendarAgent } from "../agents/ms/calendarAgent.js";
 import { createGraphClient } from "../graph/factory.js";
 import { inferActionRisk, normalizeRisk, shouldExecuteCase } from "./riskPolicy.js";
+import type { AnyRecord, DispatcherResponse, GraphClientLike } from "../core/contracts.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const root = path.resolve(__dirname, "../..");
 
-function loadSuite(filePath) {
+interface PromptExpectation {
+  status?: string;
+  agent?: string;
+  action?: string;
+  messageIncludes?: string;
+}
+
+interface PromptCase {
+  id: string;
+  input: string;
+  risk?: string;
+  expect?: PromptExpectation;
+}
+
+interface PromptSuiteFile {
+  name?: string;
+  cases?: PromptCase[];
+}
+
+function loadSuite(filePath: string): PromptSuiteFile {
   const resolved = path.isAbsolute(filePath) ? filePath : path.join(root, filePath);
-  return JSON.parse(fs.readFileSync(resolved, "utf8"));
+  return JSON.parse(fs.readFileSync(resolved, "utf8")) as PromptSuiteFile;
+}
+
+function asRecord(value: unknown): AnyRecord {
+  return typeof value === "object" && value !== null ? (value as AnyRecord) : {};
 }
 
 export async function runPromptSuite({
@@ -30,6 +53,14 @@ export async function runPromptSuite({
   provider,
   model,
   graphLive = false
+}: {
+  suitePath: string;
+  profileName?: string;
+  mode?: "simulate" | "live";
+  allowRisk?: string;
+  provider?: string;
+  model?: string;
+  graphLive?: boolean;
 }) {
   const normalizedAllowRisk = normalizeRisk(allowRisk, "low");
   const envInfo = loadEnvFile(".env");
@@ -128,36 +159,46 @@ export async function runPromptSuite({
   };
 }
 
-function evaluateExpectation(out, expected) {
+function evaluateExpectation(out: DispatcherResponse, expected: PromptExpectation) {
+  const action = asRecord(asRecord(out.artifacts).action);
   if (expected.status && out.status !== expected.status) return false;
-  if (expected.agent && out.artifacts?.action?.agent !== expected.agent) return false;
-  if (expected.action && out.artifacts?.action?.action !== expected.action) return false;
+  if (expected.agent && action.agent !== expected.agent) return false;
+  if (expected.action && action.action !== expected.action) return false;
   if (expected.messageIncludes && !String(out.message ?? "").toLowerCase().includes(String(expected.messageIncludes).toLowerCase())) {
     return false;
   }
   return true;
 }
 
-function summarizeOutput(out) {
+function summarizeOutput(out: DispatcherResponse) {
+  const action = asRecord(asRecord(out.artifacts).action);
   return {
     status: out.status,
-    agent: out.artifacts?.action?.agent ?? null,
-    action: out.artifacts?.action?.action ?? null,
+    agent: action.agent ?? null,
+    action: action.action ?? null,
     message: out.message
   };
 }
 
-function resolveGraphClient({ mode, graphLive, graphState }) {
+function resolveGraphClient({
+  mode,
+  graphLive,
+  graphState
+}: {
+  mode: "simulate" | "live";
+  graphLive: boolean;
+  graphState: { enabled: boolean; reason?: string; client?: GraphClientLike };
+}): GraphClientLike {
   if (mode === "simulate" || !graphLive) return createMockGraphClient();
   if (!graphState.enabled) {
     throw new Error(`Graph is disabled: ${graphState.reason}`);
   }
-  return graphState.client;
+  return graphState.client as GraphClientLike;
 }
 
 function createMockGraphClient() {
   return {
-    async get(path) {
+    async get(path: string) {
       if (path.startsWith("/me/calendarView")) return { value: [] };
       if (path.startsWith("/me/messages")) return { value: [] };
       if (path === "/me") {
@@ -170,7 +211,7 @@ function createMockGraphClient() {
       }
       return {};
     },
-    async post(path, body) {
+    async post(path: string, body: AnyRecord | undefined) {
       if (path === "/me/events") {
         return {
           id: "mock-event-id",

@@ -1,4 +1,3 @@
-// @ts-nocheck
 import test from "node:test";
 import assert from "node:assert/strict";
 
@@ -14,6 +13,7 @@ test("persona instructions compose sections", () => {
   const text = composePersonaInstructions({
     soul: "Voice: calm",
     agent: "Agent baseline",
+    tools: "",
     overlays: { userContext: "Prefers concise", interactionStyle: "" }
   });
   assert.match(text, /Agent baseline/);

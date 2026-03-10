@@ -1,14 +1,14 @@
-// @ts-nocheck
 import test from "node:test";
 import assert from "node:assert/strict";
 
 import { CalendarAgent } from "../src/agents/ms/calendarAgent.js";
+import { makeExecutionContext } from "./helpers.js";
 
 test("calendar schedule_event posts graph event with normalized attendees", async () => {
-  let postedPath = null;
-  let postedBody = null;
+  let postedPath: string | null = null;
+  let postedBody: Record<string, unknown> | null = null;
   const graphClient = {
-    async post(path, body) {
+    async post(path: string, body: Record<string, unknown>) {
       postedPath = path;
       postedBody = body;
       return {
@@ -34,19 +34,21 @@ test("calendar schedule_event posts graph event with normalized attendees", asyn
         attendees: [{ emailAddress: { address: "alex@example.com" } }, "sam@example.com"]
       }
     },
-    { graphClient }
+    makeExecutionContext({ graphClient })
   );
 
   assert.equal(out.status, "ok");
   assert.equal(postedPath, "/me/events");
-  assert.equal(postedBody.subject, "Project Sync");
-  assert.equal(postedBody.attendees.length, 2);
+  assert.ok(postedBody);
+  const body = postedBody as Record<string, unknown>;
+  assert.equal(body.subject as string, "Project Sync");
+  assert.equal((body.attendees as unknown[]).length, 2);
 });
 
 test("calendar find_events uses calendarView bounded range", async () => {
-  let requestedPath = null;
+  let requestedPath: string | null = null;
   const graphClient = {
-    async get(path) {
+    async get(path: string) {
       requestedPath = path;
       return { value: [] };
     }
@@ -61,10 +63,11 @@ test("calendar find_events uses calendarView bounded range", async () => {
       action: "find_events",
       params: { timeRange: "today" }
     },
-    { graphClient }
+    makeExecutionContext({ graphClient })
   );
 
   assert.equal(out.status, "ok");
+  assert.ok(requestedPath);
   assert.match(requestedPath, /^\/me\/calendarView\?/);
   assert.match(requestedPath, /startDateTime=/);
   assert.match(requestedPath, /endDateTime=/);

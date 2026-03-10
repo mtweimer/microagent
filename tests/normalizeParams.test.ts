@@ -1,4 +1,3 @@
-// @ts-nocheck
 import test from "node:test";
 import assert from "node:assert/strict";
 
@@ -21,6 +20,7 @@ test("normalize calendar schedule_event attendees and when", () => {
     }
   });
 
+  assert.ok(out);
   assert.deepEqual(out.params, {
     title: "Design Review",
     when: "2026-03-05T14:00:00",
@@ -40,6 +40,7 @@ test("normalize outlook send_email canonical params", () => {
     }
   });
 
+  assert.ok(out);
   assert.deepEqual(out.params, {
     to: ["sam@example.com"],
     subject: "Drafted by dispatcher",
@@ -58,6 +59,7 @@ test("normalize outlook read_email converts id latest alias to reference", () =>
     }
   });
 
+  assert.ok(out);
   assert.deepEqual(out.params, {
     reference: "latest"
   });
@@ -78,11 +80,12 @@ test("normalize teams params accepts extended windows and defaults", () => {
     }
   });
 
+  assert.ok(out);
   assert.deepEqual(out.params, {
     query: "valeo",
-    top: 100,
-    surface: "channels",
     window: "all",
-    depth: "balanced"
+    surface: "channels",
+    depth: "balanced",
+    top: 100
   });
 });

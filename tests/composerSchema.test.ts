@@ -1,4 +1,3 @@
-// @ts-nocheck
 import test from "node:test";
 import assert from "node:assert/strict";
 
@@ -16,4 +15,3 @@ test("composer schema normalizes and validates output", () => {
   const valid = validateComposerOutput(normalized);
   assert.equal(valid.ok, true);
 });
-

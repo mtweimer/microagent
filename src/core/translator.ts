@@ -1,9 +1,10 @@
-// @ts-nocheck
 import crypto from "node:crypto";
+import type { ActionEnvelope, AnyRecord } from "./contracts.js";
 
-function mkEnvelope(agent, action, params, confidence = 0.8) {
+function mkEnvelope(agent: string, action: string, params: AnyRecord, confidence = 0.8): ActionEnvelope {
   return {
     requestId: crypto.randomUUID(),
+    schemaVersion: "1.0.0",
     agent,
     action,
     params,
@@ -12,7 +13,7 @@ function mkEnvelope(agent, action, params, confidence = 0.8) {
   };
 }
 
-export function translateHeuristic(input, domain) {
+export function translateHeuristic(input: string, domain: string): ActionEnvelope {
   const lower = input.toLowerCase();
   const hasReadVerb = /\bread\b/.test(lower);
   const emailObject = lower.includes("email") || lower.includes("inbox") || lower.includes("message");
@@ -81,42 +82,62 @@ export function translateHeuristic(input, domain) {
     const explicitSearch = lower.includes("search") || lower.includes("find");
     const teamsDirectives = parseTeamsDirectives(lower);
     if (lower.includes("mention") || lower.includes("respond")) {
-      return mkEnvelope("ms.teams", "search_mentions", {
-        top: teamsDirectives.top ?? 30,
-        surface: teamsDirectives.surface ?? "both",
-        window: teamsDirectives.window ?? "today",
-        depth: teamsDirectives.depth ?? "balanced"
-      }, 0.78);
+      return mkEnvelope(
+        "ms.teams",
+        "search_mentions",
+        {
+          top: teamsDirectives.top ?? 30,
+          surface: teamsDirectives.surface ?? "both",
+          window: teamsDirectives.window ?? "today",
+          depth: teamsDirectives.depth ?? "balanced"
+        },
+        0.78
+      );
     }
     if (explicitSearch) {
       const query = extractTeamsSearchQuery(input);
-      return mkEnvelope("ms.teams", "search_messages", {
-        query,
+      return mkEnvelope(
+        "ms.teams",
+        "search_messages",
+        {
+          query,
+          top: teamsDirectives.top ?? 30,
+          surface: teamsDirectives.surface ?? "both",
+          window: teamsDirectives.window ?? (lower.includes("today") ? "today" : "30d"),
+          depth: teamsDirectives.depth ?? "balanced",
+          team: teamsDirectives.team ?? "",
+          channel: teamsDirectives.channel ?? ""
+        },
+        0.72
+      );
+    }
+    if (lower.includes("miss") || lower.includes("today") || lower.includes("review")) {
+      return mkEnvelope(
+        "ms.teams",
+        "review_my_day",
+        {
+          top: teamsDirectives.top ?? 30,
+          surface: teamsDirectives.surface ?? "both",
+          window: teamsDirectives.window ?? "today",
+          depth: teamsDirectives.depth ?? "balanced"
+        },
+        0.78
+      );
+    }
+    return mkEnvelope(
+      "ms.teams",
+      "search_messages",
+      {
+        query: extractTeamsSearchQuery(input),
         top: teamsDirectives.top ?? 30,
         surface: teamsDirectives.surface ?? "both",
-        window: teamsDirectives.window ?? (lower.includes("today") ? "today" : "30d"),
+        window: teamsDirectives.window ?? "30d",
         depth: teamsDirectives.depth ?? "balanced",
         team: teamsDirectives.team ?? "",
         channel: teamsDirectives.channel ?? ""
-      }, 0.72);
-    }
-    if (lower.includes("miss") || lower.includes("today") || lower.includes("review")) {
-      return mkEnvelope("ms.teams", "review_my_day", {
-        top: teamsDirectives.top ?? 30,
-        surface: teamsDirectives.surface ?? "both",
-        window: teamsDirectives.window ?? "today",
-        depth: teamsDirectives.depth ?? "balanced"
-      }, 0.78);
-    }
-    return mkEnvelope("ms.teams", "search_messages", {
-      query: extractTeamsSearchQuery(input),
-      top: teamsDirectives.top ?? 30,
-      surface: teamsDirectives.surface ?? "both",
-      window: teamsDirectives.window ?? "30d",
-      depth: teamsDirectives.depth ?? "balanced",
-      team: teamsDirectives.team ?? "",
-      channel: teamsDirectives.channel ?? ""
-    }, 0.65);
+      },
+      0.65
+    );
   }
 
   if (domain === "sharepoint") {
@@ -130,7 +151,7 @@ export function translateHeuristic(input, domain) {
   return mkEnvelope("dispatcher", "clarify", { text: input }, 0.4);
 }
 
-function extractTopN(lower) {
+function extractTopN(lower: string): number | null {
   const m = lower.match(/\b(?:last|latest)\s+(\d{1,2})\b/);
   if (!m) return null;
   const n = Number(m[1]);
@@ -138,7 +159,7 @@ function extractTopN(lower) {
   return Math.min(50, n);
 }
 
-function isEmailFollowUpQuestion(lower) {
+function isEmailFollowUpQuestion(lower: string): boolean {
   if (!lower.includes("?")) return false;
   return (
     lower.includes("what did they want") ||
@@ -149,8 +170,8 @@ function isEmailFollowUpQuestion(lower) {
   );
 }
 
-function parseTeamsDirectives(lower) {
-  const out = {};
+function parseTeamsDirectives(lower: string): AnyRecord {
+  const out: AnyRecord = {};
   const top = lower.match(/\btop\s*=\s*(\d{1,3})\b/);
   if (top) out.top = Math.max(1, Math.min(100, Number(top[1])));
   const surface = lower.match(/\bsurface\s*=\s*(chats|channels|both)\b/);
@@ -160,17 +181,15 @@ function parseTeamsDirectives(lower) {
   const depth = lower.match(/\bdepth\s*=\s*(fast|balanced|deep)\b/);
   if (depth) out.depth = depth[1];
   const team = lower.match(/\bteam\s*=\s*([^\s]+)/);
-  if (team) out.team = decodeDirectiveValue(team[1]);
+  if (team?.[1]) out.team = decodeDirectiveValue(team[1]);
   const channel = lower.match(/\bchannel\s*=\s*([^\s]+)/);
-  if (channel) out.channel = decodeDirectiveValue(channel[1]);
+  if (channel?.[1]) out.channel = decodeDirectiveValue(channel[1]);
   return out;
 }
 
-function extractTeamsSearchQuery(input) {
+function extractTeamsSearchQuery(input: string): string {
   let text = String(input ?? "").trim();
-  // Remove key=value directive tokens used by deterministic CLI command.
   text = text.replace(/\b(?:window|surface|depth|top|team|channel)\s*=\s*[^\s]+/gi, " ").replace(/\s+/g, " ").trim();
-  // Remove routing phrase prefixes.
   text = text.replace(/^search\s+teams\s+for\s+/i, "");
   text = text.replace(/^find\s+teams\s+for\s+/i, "");
   text = text.replace(/^search\s+for\s+/i, "");
@@ -178,7 +197,7 @@ function extractTeamsSearchQuery(input) {
   return text || String(input ?? "").trim();
 }
 
-function decodeDirectiveValue(value) {
+function decodeDirectiveValue(value: string): string {
   return String(value ?? "")
     .replace(/^['"]|['"]$/g, "")
     .replace(/_/g, " ")

@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { runBenchmarks } from "../src/bench/index.js";
 
 const suiteArgIndex = process.argv.indexOf("--suite");

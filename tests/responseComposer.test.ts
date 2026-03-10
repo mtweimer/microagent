@@ -1,35 +1,32 @@
-// @ts-nocheck
 import test from "node:test";
 import assert from "node:assert/strict";
 
 import { composeResponse } from "../src/core/responseComposer.js";
+import { makeEnvelope, makeExecutionResult, makeModelGateway } from "./helpers.js";
 
 test("response composer returns final text and suggestions", async () => {
   const out = await composeResponse({
     input: "search my email for invoices",
-    actionEnvelope: {
-      agent: "ms.outlook",
-      action: "search_email"
-    },
-    executionResult: {
-      status: "ok",
-      message: "Found 3 email(s).",
-      artifacts: {}
-    },
+    actionEnvelope: makeEnvelope({ agent: "ms.outlook", action: "search_email" }),
+    executionResult: makeExecutionResult({ message: "Found 3 email(s).", artifacts: {} }),
+    capabilityPack: { supportedDomains: [], supportedActions: {}, unsupportedKeywords: [], policy: "" },
+    modelGateway: null,
     memoryRefs: [1, 2]
   });
 
   assert.match(out.finalText, /reviewed your email search/i);
   assert.equal(Array.isArray(out.suggestedActions), true);
   assert.equal(out.suggestedActions.length >= 1, true);
-  assert.match(out.suggestedActions[0].rationale, /messages/i);
+  assert.match(out.suggestedActions[0]?.rationale ?? "", /messages/i);
 });
 
 test("response composer chat mode returns direct conversational text", async () => {
   const out = await composeResponse({
     input: "hello",
     actionEnvelope: null,
-    executionResult: { status: "ok", message: "" },
+    executionResult: makeExecutionResult({ message: "" }),
+    capabilityPack: { supportedDomains: [], supportedActions: {}, unsupportedKeywords: [], policy: "" },
+    modelGateway: null,
     memoryRefs: []
   });
   assert.equal(out.conversationMode, "chat");
@@ -40,8 +37,9 @@ test("response composer chat mode uses freeform model output when available", as
   const out = await composeResponse({
     input: "hello",
     actionEnvelope: null,
-    executionResult: { status: "ok", message: "" },
-    modelGateway: {
+    executionResult: makeExecutionResult({ message: "" }),
+    capabilityPack: { supportedDomains: [], supportedActions: {}, unsupportedKeywords: [], policy: "" },
+    modelGateway: makeModelGateway({
       getActiveProvider() {
         return "ollama";
       },
@@ -51,7 +49,7 @@ test("response composer chat mode uses freeform model output when available", as
       async completeText() {
         return "Hello. I am micro-claw. I can help with email and calendar workflows.";
       }
-    },
+    }),
     memoryRefs: []
   });
   assert.equal(out.conversationMode, "chat");
@@ -63,8 +61,9 @@ test("response composer chat mode rejects schema-like outputs and falls back", a
   const out = await composeResponse({
     input: "hello",
     actionEnvelope: null,
-    executionResult: { status: "ok", message: "" },
-    modelGateway: {
+    executionResult: makeExecutionResult({ message: "" }),
+    capabilityPack: { supportedDomains: [], supportedActions: {}, unsupportedKeywords: [], policy: "" },
+    modelGateway: makeModelGateway({
       getActiveProvider() {
         return "ollama";
       },
@@ -74,7 +73,7 @@ test("response composer chat mode rejects schema-like outputs and falls back", a
       async completeText() {
         return '{"summary":"General conversation mode activated."}';
       }
-    },
+    }),
     memoryRefs: []
   });
   assert.equal(out.conversationMode, "chat");
@@ -85,19 +84,17 @@ test("response composer chat mode rejects schema-like outputs and falls back", a
 test("response composer teams review returns useful zero-result guidance", async () => {
   const out = await composeResponse({
     input: "did i miss anything in teams today?",
-    actionEnvelope: {
-      agent: "ms.teams",
-      action: "review_my_day"
-    },
-    executionResult: {
-      status: "ok",
+    actionEnvelope: makeEnvelope({ agent: "ms.teams", action: "review_my_day" }),
+    executionResult: makeExecutionResult({
       message: "Reviewed 0 Teams message(s).",
       artifacts: {
         source: "me.chats.messages_fallback",
         total: 0,
         prioritized: []
       }
-    },
+    }),
+    capabilityPack: { supportedDomains: [], supportedActions: {}, unsupportedKeywords: [], policy: "" },
+    modelGateway: null,
     memoryRefs: []
   });
 
@@ -112,12 +109,8 @@ test("response composer teams review returns useful zero-result guidance", async
 test("response composer read email includes recommendation language", async () => {
   const out = await composeResponse({
     input: "should i respond?",
-    actionEnvelope: {
-      agent: "ms.outlook",
-      action: "read_email"
-    },
-    executionResult: {
-      status: "ok",
+    actionEnvelope: makeEnvelope({ agent: "ms.outlook", action: "read_email" }),
+    executionResult: makeExecutionResult({
       message: "Read email",
       artifacts: {
         id: "msg-1",
@@ -126,7 +119,9 @@ test("response composer read email includes recommendation language", async () =
         receivedDateTime: "2026-03-05T10:00:00Z",
         bodyPreview: "Can you review this and reply with next steps?"
       }
-    },
+    }),
+    capabilityPack: { supportedDomains: [], supportedActions: {}, unsupportedKeywords: [], policy: "" },
+    modelGateway: null,
     memoryRefs: []
   });
   assert.match(out.finalText, /Recommendation:/);
@@ -136,12 +131,8 @@ test("response composer read email includes recommendation language", async () =
 test("response composer read teams message includes recommendation language", async () => {
   const out = await composeResponse({
     input: "is that important?",
-    actionEnvelope: {
-      agent: "ms.teams",
-      action: "read_message"
-    },
-    executionResult: {
-      status: "ok",
+    actionEnvelope: makeEnvelope({ agent: "ms.teams", action: "read_message" }),
+    executionResult: makeExecutionResult({
       message: "Read Teams message.",
       artifacts: {
         id: "t-1",
@@ -152,7 +143,9 @@ test("response composer read teams message includes recommendation language", as
         channelName: "General",
         bodyPreview: "Please review the latest Valeo update and respond with blockers."
       }
-    },
+    }),
+    capabilityPack: { supportedDomains: [], supportedActions: {}, unsupportedKeywords: [], policy: "" },
+    modelGateway: null,
     memoryRefs: []
   });
   assert.match(out.finalText, /Recommendation:/);
@@ -162,12 +155,8 @@ test("response composer read teams message includes recommendation language", as
 test("response composer teams search no-hit gives refinement guidance", async () => {
   const out = await composeResponse({
     input: "search teams for valeo",
-    actionEnvelope: {
-      agent: "ms.teams",
-      action: "search_messages"
-    },
-    executionResult: {
-      status: "ok",
+    actionEnvelope: makeEnvelope({ agent: "ms.teams", action: "search_messages" }),
+    executionResult: makeExecutionResult({
       message: "Found 0 Teams message(s) matching 'valeo'.",
       artifacts: {
         query: "valeo",
@@ -184,7 +173,9 @@ test("response composer teams search no-hit gives refinement guidance", async ()
         },
         limitations: []
       }
-    },
+    }),
+    capabilityPack: { supportedDomains: [], supportedActions: {}, unsupportedKeywords: [], policy: "" },
+    modelGateway: null,
     memoryRefs: []
   });
 
@@ -194,12 +185,8 @@ test("response composer teams search no-hit gives refinement guidance", async ()
 test("response composer teams search no-hit with window=all avoids broader-window suggestion", async () => {
   const out = await composeResponse({
     input: "search teams for valeo",
-    actionEnvelope: {
-      agent: "ms.teams",
-      action: "search_messages"
-    },
-    executionResult: {
-      status: "ok",
+    actionEnvelope: makeEnvelope({ agent: "ms.teams", action: "search_messages" }),
+    executionResult: makeExecutionResult({
       message: "Found 0 Teams message(s) matching 'valeo'.",
       artifacts: {
         query: "valeo",
@@ -215,7 +202,9 @@ test("response composer teams search no-hit with window=all avoids broader-windo
         },
         limitations: []
       }
-    },
+    }),
+    capabilityPack: { supportedDomains: [], supportedActions: {}, unsupportedKeywords: [], policy: "" },
+    modelGateway: null,
     memoryRefs: []
   });
 
@@ -229,12 +218,8 @@ test("response composer teams search no-hit with window=all avoids broader-windo
 test("response composer teams search no-hit includes workspace fallback hints", async () => {
   const out = await composeResponse({
     input: "search teams for valeo",
-    actionEnvelope: {
-      agent: "ms.teams",
-      action: "search_messages"
-    },
-    executionResult: {
-      status: "ok",
+    actionEnvelope: makeEnvelope({ agent: "ms.teams", action: "search_messages" }),
+    executionResult: makeExecutionResult({
       message: "Found 0 Teams message(s) matching 'valeo'.",
       artifacts: {
         query: "valeo",
@@ -251,7 +236,9 @@ test("response composer teams search no-hit includes workspace fallback hints", 
         },
         limitations: []
       }
-    },
+    }),
+    capabilityPack: { supportedDomains: [], supportedActions: {}, unsupportedKeywords: [], policy: "" },
+    modelGateway: null,
     memoryRefs: []
   });
 
@@ -264,12 +251,8 @@ test("response composer teams search no-hit includes workspace fallback hints", 
 test("response composer teams search chat fallback makes teams-s8 chat-focused", async () => {
   const out = await composeResponse({
     input: "search teams for ksm",
-    actionEnvelope: {
-      agent: "ms.teams",
-      action: "search_messages"
-    },
-    executionResult: {
-      status: "ok",
+    actionEnvelope: makeEnvelope({ agent: "ms.teams", action: "search_messages" }),
+    executionResult: makeExecutionResult({
       message: "Found 0 Teams message(s) matching 'ksm'.",
       artifacts: {
         query: "ksm",
@@ -286,7 +269,9 @@ test("response composer teams search chat fallback makes teams-s8 chat-focused",
         },
         limitations: []
       }
-    },
+    }),
+    capabilityPack: { supportedDomains: [], supportedActions: {}, unsupportedKeywords: [], policy: "" },
+    modelGateway: null,
     memoryRefs: []
   });
 
@@ -300,12 +285,8 @@ test("response composer teams search chat fallback makes teams-s8 chat-focused",
 test("response composer teams search max-scan no-hit avoids deep-scan suggestion", async () => {
   const out = await composeResponse({
     input: "search teams for valeo",
-    actionEnvelope: {
-      agent: "ms.teams",
-      action: "search_messages"
-    },
-    executionResult: {
-      status: "ok",
+    actionEnvelope: makeEnvelope({ agent: "ms.teams", action: "search_messages" }),
+    executionResult: makeExecutionResult({
       message: "Found 0 Teams message(s) matching 'valeo'.",
       artifacts: {
         query: "valeo",
@@ -321,7 +302,9 @@ test("response composer teams search max-scan no-hit avoids deep-scan suggestion
         },
         limitations: []
       }
-    },
+    }),
+    capabilityPack: { supportedDomains: [], supportedActions: {}, unsupportedKeywords: [], policy: "" },
+    modelGateway: null,
     memoryRefs: []
   });
 
@@ -334,12 +317,8 @@ test("response composer teams search max-scan no-hit avoids deep-scan suggestion
 test("response composer teams search max-scan scoped no-hit suggests relaxing scope", async () => {
   const out = await composeResponse({
     input: "search teams for review team=hoplite channel=general",
-    actionEnvelope: {
-      agent: "ms.teams",
-      action: "search_messages"
-    },
-    executionResult: {
-      status: "ok",
+    actionEnvelope: makeEnvelope({ agent: "ms.teams", action: "search_messages" }),
+    executionResult: makeExecutionResult({
       message: "Found 0 Teams message(s) matching 'review'.",
       artifacts: {
         query: "review",
@@ -355,7 +334,9 @@ test("response composer teams search max-scan scoped no-hit suggests relaxing sc
         },
         limitations: []
       }
-    },
+    }),
+    capabilityPack: { supportedDomains: [], supportedActions: {}, unsupportedKeywords: [], policy: "" },
+    modelGateway: null,
     memoryRefs: []
   });
 

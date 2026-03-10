@@ -1,7 +1,7 @@
-// @ts-nocheck
 import { detectDomain } from "../../contracts/actionRegistry.js";
+import type { DomainSelection, SessionRefs } from "../contracts.js";
 
-export function inferContextualDomain(input, sessionRefs) {
+export function inferContextualDomain(input: string, sessionRefs: SessionRefs | null | undefined): string | null {
   const lower = String(input ?? "").toLowerCase();
   const hasOutlookRef = Boolean(sessionRefs?.outlook?.lastEmailId);
   if (!hasOutlookRef) return null;
@@ -24,7 +24,7 @@ export function inferContextualDomain(input, sessionRefs) {
   return null;
 }
 
-export function resolveDomain(input, selection, sessionRefs) {
+export function resolveDomain(input: string, selection: DomainSelection | null | undefined, sessionRefs: SessionRefs | null | undefined): string | null {
   const primary = selection?.primary ?? detectDomain(input);
   if (primary) return primary;
   return inferContextualDomain(input, sessionRefs);

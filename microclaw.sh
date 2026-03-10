@@ -32,11 +32,12 @@ is_running() {
 
 start_daemon() {
   ensure_node
+  local extra_args=("$@")
   if is_running; then
     echo "micro-claw already running (pid $(cat "$PID_FILE"))"
     return 0
   fi
-  nohup bash -lc "cd '$ROOT_DIR' && exec npx tsx '$ROOT_DIR/src/cli.ts' run" >"$LOG_FILE" 2>&1 &
+  nohup bash -lc "cd '$ROOT_DIR' && exec npm run run -- ${extra_args[*]:-}" >"$LOG_FILE" 2>&1 &
   local pid=$!
   echo "$pid" >"$PID_FILE"
   echo "micro-claw started in daemon mode (pid $pid)"
@@ -46,7 +47,7 @@ start_daemon() {
 start_foreground() {
   ensure_node
   cd "$ROOT_DIR"
-  exec npx tsx "$ROOT_DIR/src/cli.ts" run
+  exec npm run run -- "$@"
 }
 
 stop_daemon() {
@@ -86,13 +87,18 @@ show_status() {
 rebuild() {
   ensure_node
   if command_exists npm; then
-    npm install
-    npm run schema:generate
-    npm run schema:check
-    npm test
-    npm run check
-    echo "rebuild complete"
-    return 0
+    cd "$ROOT_DIR"
+    exec npm run build
+  fi
+  echo "npm is required but not found on PATH"
+  exit 1
+}
+
+update_local() {
+  ensure_node
+  if command_exists npm; then
+    cd "$ROOT_DIR"
+    exec npm run update
   fi
   echo "npm is required but not found on PATH"
   exit 1
@@ -101,17 +107,25 @@ rebuild() {
 show_help() {
   cat <<'EOF'
 Usage:
+  ./microclaw.sh run [--profile <name>]
+  ./microclaw.sh up [--profile <name>]
+  ./microclaw.sh down
   ./microclaw.sh start [--daemon]
   ./microclaw.sh stop
   ./microclaw.sh restart [--daemon]
   ./microclaw.sh status
   ./microclaw.sh rebuild
+  ./microclaw.sh build
+  ./microclaw.sh update
   ./microclaw.sh logs
   ./microclaw.sh help
 
 Notes:
-  - start (no flag) runs interactive CLI in foreground.
+  - run/start (no daemon flag) run interactive CLI in foreground.
+  - up: doctor then interactive run.
+  - down: stop daemon mode if running.
   - start --daemon runs in background and writes logs to data/microclaw.log.
+  - update: safe local refresh (npm install + build), no git pull.
 EOF
 }
 
@@ -120,11 +134,26 @@ main() {
   local flag="${2:-}"
 
   case "$cmd" in
+    run)
+      shift || true
+      start_foreground "$@"
+      ;;
+    up)
+      shift || true
+      cd "$ROOT_DIR"
+      npm run doctor -- "$@"
+      exec npm run run -- "$@"
+      ;;
+    down)
+      stop_daemon
+      ;;
     start)
       if [[ "$flag" == "--daemon" ]]; then
-        start_daemon
+        shift 2 || true
+        start_daemon "$@"
       else
-        start_foreground
+        shift || true
+        start_foreground "$@"
       fi
       ;;
     stop)
@@ -133,9 +162,11 @@ main() {
     restart)
       stop_daemon
       if [[ "$flag" == "--daemon" ]]; then
-        start_daemon
+        shift 2 || true
+        start_daemon "$@"
       else
-        start_foreground
+        shift || true
+        start_foreground "$@"
       fi
       ;;
     status)
@@ -143,6 +174,12 @@ main() {
       ;;
     rebuild)
       rebuild
+      ;;
+    build)
+      rebuild
+      ;;
+    update)
+      update_local
       ;;
     logs)
       touch "$LOG_FILE"

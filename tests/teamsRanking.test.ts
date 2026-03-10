@@ -1,21 +1,35 @@
-// @ts-nocheck
 import test from "node:test";
 import assert from "node:assert/strict";
 
 import { rankTeamsMessagesByQuery } from "../src/agents/teams/actions/_teamsRanking.js";
 
-function msg({ id, from, bodyPreview, createdDateTime }) {
+interface RankingInputMessage {
+  id: string;
+  from: string;
+  bodyPreview: string;
+  createdDateTime: string;
+}
+
+function msg({ id, from, bodyPreview, createdDateTime }: RankingInputMessage) {
   return {
     id,
+    sourceType: "channel" as const,
+    sourcePath: "/teams/t1/channels/c1/messages",
     from,
-    bodyPreview,
     createdDateTime,
     importance: "normal",
-    teamName: "Hoplite - Marketing",
-    channelName: "General",
-    chatTopic: "",
+    webUrl: null,
+    subject: null,
+    summary: null,
+    bodyPreview,
     mentions: [],
-    attachmentNames: []
+    attachmentNames: [],
+    chatId: null,
+    chatTopic: "",
+    teamId: "t1",
+    teamName: "Hoplite - Marketing",
+    channelId: "c1",
+    channelName: "General"
   };
 }
 
@@ -47,6 +61,5 @@ test("teams ranking config can aggressively down-rank automation senders", () =>
 
   assert.equal(neutral.length, 2);
   assert.equal(aggressive.length, 2);
-  assert.equal(aggressive[0].from, "Matthew Guzek");
+  assert.equal(aggressive[0]?.from, "Matthew Guzek");
 });
-

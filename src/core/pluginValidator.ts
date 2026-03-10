@@ -1,18 +1,45 @@
-// @ts-nocheck
 import fs from "node:fs";
 import path from "node:path";
 import { discoverAgentManifests, getAgentCatalog } from "../agents/catalog.js";
-import { ACTION_REGISTRY } from "../contracts/actionRegistry.js";
+import { ACTION_REGISTRY, type DomainName } from "../contracts/actionRegistry.js";
 
-export async function validatePlugins(options = {}) {
-  const manifests = discoverAgentManifests(options);
-  const catalog = await getAgentCatalog(options);
+interface CatalogEntry {
+  id: string;
+  implemented?: boolean;
+  loadError?: string | null;
+}
+
+interface ManifestDiscoveryEntry {
+  id?: string;
+  packageName?: string;
+  path: string;
+  entryPath?: string;
+  manifest?: {
+    actions?: string[];
+  };
+}
+
+interface PluginValidationCheck {
+  id?: string | undefined;
+  packageName?: string | undefined;
+  manifestPath: string;
+  ok: boolean;
+  issues: string[];
+}
+
+export async function validatePlugins(options: Record<string, unknown> = {}): Promise<{
+  checks: PluginValidationCheck[];
+  summary: { total: number; passed: number; failed: number };
+  ok: boolean;
+}> {
+  const manifests = discoverAgentManifests(options) as ManifestDiscoveryEntry[];
+  const catalog = (await getAgentCatalog(options)) as CatalogEntry[];
   const catalogById = new Map(catalog.map((c) => [c.id, c]));
-  const checks = [];
+  const checks: PluginValidationCheck[] = [];
 
   for (const m of manifests) {
     const id = m.id;
-    const row = {
+    const row: PluginValidationCheck = {
       id,
       packageName: m.packageName,
       manifestPath: m.path,
@@ -29,7 +56,7 @@ export async function validatePlugins(options = {}) {
       row.issues.push(`load failed: ${loaded?.loadError ?? "unknown"}`);
     }
 
-    const domain = findDomainByAgentId(id);
+    const domain = id ? findDomainByAgentId(id) : null;
     if (domain) {
       const expected = Object.keys(ACTION_REGISTRY[domain].actions).sort();
       const actual = [...(m.manifest?.actions ?? [])].sort();
@@ -54,14 +81,14 @@ export async function validatePlugins(options = {}) {
   };
 }
 
-function findDomainByAgentId(agentId) {
-  for (const [domain, cfg] of Object.entries(ACTION_REGISTRY)) {
+function findDomainByAgentId(agentId: string): DomainName | null {
+  for (const [domain, cfg] of Object.entries(ACTION_REGISTRY) as Array<[DomainName, (typeof ACTION_REGISTRY)[DomainName]]>) {
     if (cfg.agentId === agentId) return domain;
   }
   return null;
 }
 
-export function parsePluginPathArg(value) {
+export function parsePluginPathArg(value: unknown): string[] {
   const raw = String(value ?? "").trim();
   if (!raw) return [];
   return raw

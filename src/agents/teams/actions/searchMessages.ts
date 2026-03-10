@@ -1,9 +1,48 @@
-// @ts-nocheck
-import { fetchTeamsMessages } from "./_teamsGraph.js";
-import { normalizeTeamsParams } from "./_teamsParams.js";
+import { fetchTeamsMessages, type FetchCoverage, type TeamsFetchResult, type TeamsMessageRow } from "./_teamsGraph.js";
+import { normalizeTeamsParams, type TeamsParams } from "./_teamsParams.js";
 import { buildSearchBlob, rankTeamsEntityCandidates, rankTeamsMessagesByQuery } from "./_teamsRanking.js";
+import type { ActionEnvelope, AgentExecutionContext, AgentExecutionResult, MemoryQueryHit } from "../../../core/contracts.js";
 
-export async function searchMessagesAction(env, ctx) {
+interface TeamsEntityCatalogRow {
+  type?: string | undefined;
+  id?: string | null | undefined;
+  label?: string | null | undefined;
+  name?: string | null | undefined;
+  teamId?: string | null | undefined;
+  teamName?: string | null | undefined;
+  channelId?: string | null | undefined;
+  channelName?: string | null | undefined;
+  webUrl?: string | null | undefined;
+}
+
+type SearchFetchResult = TeamsFetchResult & {
+  catalog: { chats: TeamsEntityCatalogRow[]; teams: TeamsEntityCatalogRow[]; channels: TeamsEntityCatalogRow[] };
+  fallbackMatches?: unknown[];
+};
+
+interface IndexedSearchResult {
+  messages?: TeamsMessageRow[];
+  coverage?: FetchCoverage;
+  limitations?: string[];
+  sources?: string[];
+  fallbackMatches?: unknown[];
+}
+
+function emptyCoverage(): FetchCoverage {
+  return {
+    chatsScanned: 0,
+    chatMessagesScanned: 0,
+    teamsScanned: 0,
+    channelsScanned: 0,
+    channelMessagesScanned: 0,
+    totalCandidates: 0
+  };
+}
+
+export async function searchMessagesAction(
+  env: ActionEnvelope,
+  ctx: AgentExecutionContext
+): Promise<AgentExecutionResult> {
   const graph = ctx.graphClient;
   const teamsIndex = ctx.teamsIndex;
   const rankingOptions = ctx.teamsRankingConfig ?? {};
@@ -15,9 +54,9 @@ export async function searchMessagesAction(env, ctx) {
       message: "Teams search requires a query."
     };
   }
-  let data;
+  let data: SearchFetchResult | undefined;
   if (teamsIndex) {
-    const indexed = teamsIndex.searchMessages({
+    const indexed = teamsIndex.searchMessages?.({
       query,
       top: params.top,
       window: params.window,
@@ -29,19 +68,20 @@ export async function searchMessagesAction(env, ctx) {
       until: params.until,
       importance: params.importance
     });
-    if ((indexed.messages?.length ?? 0) > 0 || (indexed.fallbackMatches?.length ?? 0) > 0) {
+    const indexedRecord = indexed as unknown as IndexedSearchResult | undefined;
+    if ((indexedRecord?.messages?.length ?? 0) > 0 || (indexedRecord?.fallbackMatches?.length ?? 0) > 0) {
       data = {
-        messages: indexed.messages ?? [],
+        messages: (indexedRecord?.messages ?? []) as TeamsMessageRow[],
         catalog: { chats: [], teams: [], channels: [] },
-        coverage: indexed.coverage ?? {},
-        limitations: indexed.limitations ?? [],
-        sources: indexed.sources ?? ["teams.local_index"],
-        fallbackMatches: indexed.fallbackMatches ?? []
+        coverage: indexedRecord?.coverage ?? emptyCoverage(),
+        limitations: indexedRecord?.limitations ?? [],
+        sources: indexedRecord?.sources ?? ["teams.local_index"],
+        fallbackMatches: indexedRecord?.fallbackMatches ?? []
       };
     }
   }
   if (!data) {
-    data = await fetchTeamsMessages(graph, { ...params, query });
+    data = (await fetchTeamsMessages(graph, { ...params, query })) as SearchFetchResult;
   }
   const rows = data.messages;
   const queryTokens = tokenizeQuery(query);
@@ -90,7 +130,7 @@ export async function searchMessagesAction(env, ctx) {
   };
 }
 
-function tokenizeQuery(query) {
+function tokenizeQuery(query: string): string[] {
   return String(query ?? "")
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, " ")
@@ -98,11 +138,14 @@ function tokenizeQuery(query) {
     .filter((t) => t.length >= 2);
 }
 
-function collectMemoryHints(memory, query) {
+function collectMemoryHints(
+  memory: AgentExecutionContext["memory"],
+  query: string
+): string[] {
   if (!memory || typeof memory.query !== "function") return [];
   try {
     const results = memory.query(query, { topK: 5 })?.results ?? [];
-    return results.map((r) => String(r?.text ?? "")).slice(0, 5);
+    return (results as MemoryQueryHit[]).map((r) => String(r?.text ?? "")).slice(0, 5);
   } catch {
     return [];
   }

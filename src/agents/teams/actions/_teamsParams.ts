@@ -1,29 +1,58 @@
-// @ts-nocheck
-function clampTop(value, fallback = 25) {
+export type TeamsSurface = "chats" | "channels" | "both";
+export type TeamsWindow = "today" | "48h" | "7d" | "30d" | "all";
+export type TeamsDepth = "fast" | "balanced" | "deep" | "full";
+export type TeamsImportance = "high" | "normal" | "";
+
+export interface TeamsParams {
+  query: string;
+  top: number;
+  surface: TeamsSurface;
+  window: TeamsWindow;
+  depth: TeamsDepth;
+  team: string;
+  channel: string;
+  sender: string;
+  since: string;
+  until: string;
+  importance: TeamsImportance;
+}
+
+export interface TeamsParamDefaults {
+  top?: number;
+  surface?: TeamsSurface;
+  window?: TeamsWindow;
+  depth?: TeamsDepth;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+}
+
+function clampTop(value: unknown, fallback = 25): number {
   const n = Number(value);
   if (Number.isNaN(n) || n < 1) return fallback;
   return Math.min(100, Math.floor(n));
 }
 
-function normalizeSurface(value, fallback = "both") {
+function normalizeSurface(value: unknown, fallback: TeamsSurface = "both"): TeamsSurface {
   const lower = String(value ?? fallback).toLowerCase().trim();
   if (lower === "chats" || lower === "channels" || lower === "both") return lower;
   return fallback;
 }
 
-function normalizeWindow(value, fallback = "today") {
+function normalizeWindow(value: unknown, fallback: TeamsWindow = "today"): TeamsWindow {
   const lower = String(value ?? fallback).toLowerCase().trim();
   if (lower === "today" || lower === "48h" || lower === "7d" || lower === "30d" || lower === "all") return lower;
   return fallback;
 }
 
-function normalizeDepth(value, fallback = "balanced") {
+function normalizeDepth(value: unknown, fallback: TeamsDepth = "balanced"): TeamsDepth {
   const lower = String(value ?? fallback).toLowerCase().trim();
   if (lower === "fast" || lower === "balanced" || lower === "deep" || lower === "full") return lower;
   return fallback;
 }
 
-function normalizeTime(value) {
+function normalizeTime(value: unknown): string {
   const text = String(value ?? "").trim();
   if (!text) return "";
   const d = new Date(text);
@@ -31,25 +60,26 @@ function normalizeTime(value) {
   return d.toISOString();
 }
 
-function normalizeImportance(value) {
+function normalizeImportance(value: unknown): TeamsImportance {
   const lower = String(value ?? "").toLowerCase().trim();
   if (lower === "high" || lower === "normal") return lower;
   return "";
 }
 
-export function normalizeTeamsParams(params = {}, defaults = {}) {
-  const team = typeof params.team === "string" ? params.team.trim() : "";
-  const channel = typeof params.channel === "string" ? params.channel.trim() : "";
-  const sender = typeof params.sender === "string" ? params.sender.trim() : "";
-  const since = normalizeTime(params.since ?? "");
-  const until = normalizeTime(params.until ?? "");
-  const importance = normalizeImportance(params.importance ?? "");
+export function normalizeTeamsParams(params: unknown = {}, defaults: TeamsParamDefaults = {}): TeamsParams {
+  const record = asRecord(params);
+  const team = typeof record.team === "string" ? record.team.trim() : "";
+  const channel = typeof record.channel === "string" ? record.channel.trim() : "";
+  const sender = typeof record.sender === "string" ? record.sender.trim() : "";
+  const since = normalizeTime(record.since ?? "");
+  const until = normalizeTime(record.until ?? "");
+  const importance = normalizeImportance(record.importance ?? "");
   return {
-    query: typeof params.query === "string" ? params.query.trim() : "",
-    top: clampTop(params.top, defaults.top ?? 30),
-    surface: normalizeSurface(params.surface, defaults.surface ?? "both"),
-    window: normalizeWindow(params.window, defaults.window ?? "today"),
-    depth: normalizeDepth(params.depth, defaults.depth ?? "balanced"),
+    query: typeof record.query === "string" ? record.query.trim() : "",
+    top: clampTop(record.top, defaults.top ?? 30),
+    surface: normalizeSurface(record.surface, defaults.surface ?? "both"),
+    window: normalizeWindow(record.window, defaults.window ?? "today"),
+    depth: normalizeDepth(record.depth, defaults.depth ?? "balanced"),
     team,
     channel,
     sender,

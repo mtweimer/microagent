@@ -1,14 +1,64 @@
-// @ts-nocheck
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import type { AgentLike } from "../core/contracts.js";
 
 const AGENTS_DIR = path.dirname(fileURLToPath(import.meta.url));
 const EXCLUDED_DIRS = new Set(["base", "ms"]);
 
-export function discoverAgentManifests(options = {}) {
+interface AgentManifest {
+  agentId?: string;
+  id?: string;
+  entry?: string;
+  exportName?: string;
+  actions?: string[];
+  [key: string]: unknown;
+}
+
+interface AgentManifestEntry {
+  packageName: string;
+  packageDir: string;
+  path: string;
+  id: string | null;
+  manifest: AgentManifest;
+  entryPath: string;
+}
+
+interface CatalogRow {
+  id: string | null;
+  packageName: string;
+  description: string | null;
+  implemented: boolean;
+  loadError: string | null;
+  manifest: AgentManifest;
+}
+
+interface AgentCatalogOptions {
+  enabled?: unknown;
+  includeDisabled?: boolean;
+  agentPaths?: unknown;
+  profile?: {
+    agents?: {
+      paths?: unknown;
+    };
+  };
+  env?: {
+    MICRO_CLAW_AGENT_PATHS?: string;
+  };
+}
+
+interface LoadedAgentResult {
+  agent: AgentLike | null;
+  error: string | null;
+}
+
+function isAgentLike(value: unknown): value is AgentLike {
+  return typeof value === "object" && value !== null && "id" in value && "execute" in value && typeof (value as AgentLike).execute === "function";
+}
+
+export function discoverAgentManifests(options: AgentCatalogOptions = {}): AgentManifestEntry[] {
   const roots = resolveAgentRoots(options);
-  const manifests = [];
+  const manifests: AgentManifestEntry[] = [];
   for (const root of roots) {
     if (!fs.existsSync(root)) continue;
     const entries = fs.readdirSync(root, { withFileTypes: true });
@@ -19,7 +69,7 @@ export function discoverAgentManifests(options = {}) {
       const manifestPath = path.join(packageDir, "manifest.json");
       if (!fs.existsSync(manifestPath)) continue;
       const raw = fs.readFileSync(manifestPath, "utf8");
-      const manifest = JSON.parse(raw);
+      const manifest = JSON.parse(raw) as AgentManifest;
       const id = manifest.agentId ?? manifest.id ?? null;
       const entryPath = resolveEntryPath(packageDir, manifest);
       manifests.push({
@@ -41,11 +91,11 @@ export function discoverAgentManifests(options = {}) {
   return manifests;
 }
 
-export async function createDefaultAgents(options = {}) {
+export async function createDefaultAgents(options: AgentCatalogOptions = {}): Promise<AgentLike[]> {
   const manifests = discoverAgentManifests(options);
   const enabled = normalizeEnabledList(options.enabled);
   const includeDisabled = options.includeDisabled === true;
-  const agents = [];
+  const agents: AgentLike[] = [];
   let matchedByEnabled = 0;
   for (const item of manifests) {
     if (!item.id) continue;
@@ -65,9 +115,9 @@ export async function createDefaultAgents(options = {}) {
   return agents;
 }
 
-export async function getAgentCatalog(options = {}) {
+export async function getAgentCatalog(options: AgentCatalogOptions = {}): Promise<CatalogRow[]> {
   const manifests = discoverAgentManifests(options);
-  const rows = [];
+  const rows: CatalogRow[] = [];
   for (const item of manifests) {
     const loaded = await loadAgentFromManifest(item);
     rows.push({
@@ -82,7 +132,7 @@ export async function getAgentCatalog(options = {}) {
   return rows;
 }
 
-function resolveAgentRoots(options) {
+function resolveAgentRoots(options: AgentCatalogOptions): string[] {
   const roots = [AGENTS_DIR];
   const fromOptions = normalizePathList(options.agentPaths ?? []);
   const fromProfile = normalizePathList(options.profile?.agents?.paths ?? []);
@@ -91,7 +141,7 @@ function resolveAgentRoots(options) {
   return [...new Set(roots)];
 }
 
-function resolveEntryPath(packageDir, manifest) {
+function resolveEntryPath(packageDir: string, manifest: AgentManifest): string {
   const rel = typeof manifest.entry === "string" && manifest.entry.trim() ? manifest.entry.trim() : "./index.ts";
   const direct = path.resolve(packageDir, rel);
   if (fs.existsSync(direct)) return direct;
@@ -108,12 +158,12 @@ function resolveEntryPath(packageDir, manifest) {
   return direct;
 }
 
-function normalizeEnabledList(enabled) {
+function normalizeEnabledList(enabled: unknown): Set<string> {
   if (!Array.isArray(enabled)) return new Set();
   return new Set(enabled.map((x) => String(x)));
 }
 
-function normalizePathList(value) {
+function normalizePathList(value: unknown): string[] {
   if (Array.isArray(value)) return value.filter(Boolean).map((v) => String(v));
   const raw = String(value ?? "").trim();
   if (!raw) return [];
@@ -123,12 +173,12 @@ function normalizePathList(value) {
     .filter(Boolean);
 }
 
-async function loadAgentFromManifest(item) {
+async function loadAgentFromManifest(item: AgentManifestEntry): Promise<LoadedAgentResult> {
   try {
     if (!item?.entryPath || !fs.existsSync(item.entryPath)) {
       return { agent: null, error: `entry not found: ${item?.entryPath ?? "unknown"}` };
     }
-    const mod = await import(pathToFileURL(item.entryPath).href);
+    const mod = (await import(pathToFileURL(item.entryPath).href)) as Record<string, unknown>;
     const agent = instantiateAgent(mod, item);
     if (!agent) return { agent: null, error: "no compatible export found" };
     if (item.id && agent.id !== item.id) {
@@ -136,11 +186,12 @@ async function loadAgentFromManifest(item) {
     }
     return { agent, error: null };
   } catch (error) {
-    return { agent: null, error: String(error?.message ?? error) };
+    const message = error instanceof Error ? error.message : String(error);
+    return { agent: null, error: message };
   }
 }
 
-function instantiateAgent(mod, item) {
+function instantiateAgent(mod: Record<string, unknown>, item: AgentManifestEntry): AgentLike | null {
   const manifest = item?.manifest ?? {};
   const exportName = String(manifest.exportName ?? "").trim();
   if (exportName && mod[exportName]) {
@@ -159,23 +210,25 @@ function instantiateAgent(mod, item) {
   return null;
 }
 
-function materialize(value, callDirect = false) {
+function materialize(value: unknown, callDirect = false): AgentLike | null {
   if (!value) return null;
-  if (typeof value === "object" && value.id && typeof value.execute === "function") return value;
+  if (isAgentLike(value)) return value;
   if (typeof value !== "function") return null;
+  const factory = value as (...args: never[]) => unknown;
+  const Constructor = value as new (...args: never[]) => unknown;
   if (callDirect) {
-    const out = value();
-    if (out && out.id && typeof out.execute === "function") return out;
+    const out = factory();
+    if (isAgentLike(out)) return out;
   }
   try {
-    const out = new value();
-    if (out && out.id && typeof out.execute === "function") return out;
+    const out = new Constructor();
+    if (isAgentLike(out)) return out;
   } catch {
     // ignore class/constructor mismatch
   }
   try {
-    const out = value();
-    if (out && out.id && typeof out.execute === "function") return out;
+    const out = factory();
+    if (isAgentLike(out)) return out;
   } catch {
     return null;
   }

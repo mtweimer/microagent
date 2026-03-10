@@ -1,4 +1,3 @@
-// @ts-nocheck
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -17,9 +16,19 @@ test("persona overlay manager writes generated overlays", () => {
   const manager = new PersonaOverlayManager("test-profile");
   const narrative = new NarrativeMemory(NARR);
   const memory = new StructuredTurnMemory();
-  narrative.append({ text: "User asked for practical concise responses." });
-  memory.addTurn({ role: "user", text: "Please keep responses practical and concise." });
-  manager.refresh({ memory, narrativeMemory: narrative });
+  narrative.append({ text: "User asked for practical concise responses.", kind: "summary" });
+  memory.addTurn({ role: "user", text: "Please keep responses practical and concise.", source: "test" });
+  manager.refresh({
+    memory,
+    narrativeMemory: {
+      append(entry) {
+        narrative.append(entry);
+      },
+      summarize(range, limit) {
+        return narrative.summarize(range, limit) as unknown as Array<Record<string, unknown>>;
+      }
+    }
+  });
 
   const userContext = fs.readFileSync(`${ROOT}/user_context.generated.md`, "utf8");
   const style = fs.readFileSync(`${ROOT}/interaction_style.generated.md`, "utf8");
@@ -29,4 +38,3 @@ test("persona overlay manager writes generated overlays", () => {
   if (fs.existsSync(ROOT)) fs.rmSync(ROOT, { recursive: true, force: true });
   if (fs.existsSync(NARR)) fs.unlinkSync(NARR);
 });
-

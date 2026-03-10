@@ -1,8 +1,13 @@
-// @ts-nocheck
 import fs from "node:fs";
 import path from "node:path";
 
-function stripWrappingQuotes(value) {
+export interface EnvLoadResult {
+  filePath: string;
+  loaded: string[];
+  exists: boolean;
+}
+
+function stripWrappingQuotes(value: string): string {
   const trimmed = value.trim();
   if (
     (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
@@ -13,8 +18,8 @@ function stripWrappingQuotes(value) {
   return trimmed;
 }
 
-export function parseDotEnv(content) {
-  const parsed = {};
+export function parseDotEnv(content: string): Record<string, string> {
+  const parsed: Record<string, string> = {};
   const lines = content.split(/\r?\n/);
 
   for (const rawLine of lines) {
@@ -34,7 +39,7 @@ export function parseDotEnv(content) {
   return parsed;
 }
 
-export function loadEnvFile(filePath = ".env", env = process.env) {
+export function loadEnvFile(filePath = ".env", env: NodeJS.ProcessEnv = process.env): EnvLoadResult {
   const absPath = path.resolve(process.cwd(), filePath);
   if (!fs.existsSync(absPath)) {
     return { filePath: absPath, loaded: [], exists: false };
@@ -42,7 +47,7 @@ export function loadEnvFile(filePath = ".env", env = process.env) {
 
   const content = fs.readFileSync(absPath, "utf8");
   const parsed = parseDotEnv(content);
-  const loaded = [];
+  const loaded: string[] = [];
 
   for (const [key, value] of Object.entries(parsed)) {
     if (env[key] === undefined) {

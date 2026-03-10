@@ -1,5 +1,44 @@
-// @ts-nocheck
 import { spawnSync } from "node:child_process";
+
+interface BuildStep {
+  key: string;
+  label: string;
+  cmd: string;
+  args: string[];
+}
+
+interface StepResult {
+  key: string;
+  label: string;
+  ok: boolean;
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+}
+
+interface TestStats {
+  pass: number;
+  fail: number;
+  skipped: number;
+}
+
+interface SchemaStats {
+  total: number;
+  ok: number;
+}
+
+interface CheckStats {
+  profileOk: boolean;
+  traceOk: boolean;
+  schemaOk: boolean;
+}
+
+interface PromptStats {
+  pass: number;
+  fail: number;
+  skipped: number;
+  allowRisk: string;
+}
 
 const steps = [
   { key: "deps", label: "Dependencies", cmd: "npm", args: ["install"] },
@@ -11,13 +50,13 @@ const steps = [
   {
     key: "prompt_safety",
     label: "Prompt Safety",
-    cmd: "node",
+    cmd: "npx",
     args: ["tsx", "scripts/run-prompt-tests.ts", "--mode", "simulate", "--allow-risk", "low"]
   },
   { key: "doctor", label: "Service Health", cmd: "npx", args: ["tsx", "src/cli.ts", "doctor"] }
-];
+ ] satisfies BuildStep[];
 
-const results = [];
+const results: StepResult[] = [];
 let failed = false;
 
 for (const step of steps) {
@@ -55,9 +94,13 @@ if (failed) {
   process.exit(1);
 }
 
-function printSummary(items) {
+function asRecord(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+}
+
+function printSummary(items: StepResult[]): void {
   const byKey = Object.fromEntries(items.map((x) => [x.key, x]));
-  const statusTag = (ok) => (ok ? "PASS" : "FAIL");
+  const statusTag = (ok: boolean): "PASS" | "FAIL" => (ok ? "PASS" : "FAIL");
 
   console.log("Micro-Claw Build Summary");
   console.log("========================");
@@ -98,7 +141,7 @@ function printSummary(items) {
   }
 }
 
-function parseJsonFromOutput(text) {
+function parseJsonFromOutput(text: string): Record<string, unknown> | null {
   const trimmed = String(text ?? "").trim();
   if (!trimmed) return null;
   const idx = trimmed.indexOf("{");
@@ -111,7 +154,7 @@ function parseJsonFromOutput(text) {
   }
 }
 
-function parseNodeTestStats(text) {
+function parseNodeTestStats(text: string): TestStats | null {
   const pass = pickInt(text, /ℹ pass (\d+)/);
   const fail = pickInt(text, /ℹ fail (\d+)/);
   const skipped = pickInt(text, /ℹ skipped (\d+)/);
@@ -119,63 +162,73 @@ function parseNodeTestStats(text) {
   return { pass, fail, skipped };
 }
 
-function parseSchemaCheck(text) {
+function parseSchemaCheck(text: string): SchemaStats | null {
   const data = parseJsonFromOutput(text);
-  if (!data?.checks || !Array.isArray(data.checks)) return null;
-  const total = data.checks.length;
-  const ok = data.checks.filter((x) => x.ok).length;
+  const checks = data ? asRecord(data).checks : null;
+  if (!Array.isArray(checks)) return null;
+  const total = checks.length;
+  const ok = checks.filter((x) => asRecord(x).ok === true).length;
   return { total, ok };
 }
 
-function parseSystemCheck(text) {
+function parseSystemCheck(text: string): CheckStats | null {
   const data = parseJsonFromOutput(text);
   if (!data) return null;
+  const record = asRecord(data);
   return {
-    profileOk: !!data.profileValidation?.ok,
-    traceOk: !!data.traceValidation?.ok,
-    schemaOk: !!data.schemaCheck?.ok
+    profileOk: Boolean(asRecord(record.profileValidation).ok),
+    traceOk: Boolean(asRecord(record.traceValidation).ok),
+    schemaOk: Boolean(asRecord(record.schemaCheck).ok)
   };
 }
 
-function parsePromptSafety(text) {
+function parsePromptSafety(text: string): PromptStats | null {
   const data = parseJsonFromOutput(text);
-  if (!data?.totals) return null;
+  const totals = data ? asRecord(asRecord(data).totals) : null;
+  if (!totals) return null;
   return {
-    pass: Number(data.totals.pass ?? 0),
-    fail: Number(data.totals.fail ?? 0),
-    skipped: Number(data.totals.skipped ?? 0),
-    allowRisk: data.allowRisk ?? "unknown"
+    pass: Number(totals.pass ?? 0),
+    fail: Number(totals.fail ?? 0),
+    skipped: Number(totals.skipped ?? 0),
+    allowRisk: String(asRecord(data).allowRisk ?? "unknown")
   };
 }
 
-function parseDoctor(text) {
+function parseDoctor(text: string): string[] | null {
   const data = parseJsonFromOutput(text);
   if (!data) return null;
-  const rows = [];
-  for (const p of data.providers ?? []) {
-    const ok = p.ok ? "ok" : "not-ready";
-    rows.push(`provider:${p.provider}=${ok}`);
+  const record = asRecord(data);
+  const rows: string[] = [];
+  const providers = Array.isArray(record.providers) ? record.providers : [];
+  for (const p of providers) {
+    const provider = asRecord(p);
+    const ok = provider.ok ? "ok" : "not-ready";
+    rows.push(`provider:${String(provider.provider ?? "unknown")}=${ok}`);
   }
-  if (data.graph?.enabled) {
-    rows.push(`graph=enabled tokenCached=${Boolean(data.graph.tokenCached)}`);
+  const graph = asRecord(record.graph);
+  if (graph.enabled) {
+    rows.push(`graph=enabled tokenCached=${Boolean(graph.tokenCached)}`);
   } else {
-    rows.push(`graph=disabled reason=${data.graph?.reason ?? "unknown"}`);
+    rows.push(`graph=disabled reason=${String(graph.reason ?? "unknown")}`);
   }
-  const composerEnabled = data.composer?.enabled !== false;
+  const composer = asRecord(record.composer);
+  const cache = asRecord(record.cache);
+  const memory = asRecord(record.memory);
+  const composerEnabled = composer.enabled !== false;
   rows.push(
     `composer=${composerEnabled ? "enabled" : "disabled"} ` +
-      `strategy=${data.composer?.strategy ?? "hybrid_fallback"} ` +
-      `primaryReady=${Boolean(data.composer?.primaryReady)} ` +
-      `fallbackReady=${Boolean(data.composer?.fallbackReady)}`
+      `strategy=${String(composer.strategy ?? "hybrid_fallback")} ` +
+      `primaryReady=${Boolean(composer.primaryReady)} ` +
+      `fallbackReady=${Boolean(composer.fallbackReady)}`
   );
   rows.push(
-    `cache=enabled:${data.cache?.enabled !== false} grammarSystem:${data.cache?.grammarSystem ?? "completionBased"}`
+    `cache=enabled:${cache.enabled !== false} grammarSystem:${String(cache.grammarSystem ?? "completionBased")}`
   );
-  rows.push(`memory=${data.memory?.backend ?? "unknown"}`);
+  rows.push(`memory=${String(memory.backend ?? "unknown")}`);
   return rows;
 }
 
-function pickInt(text, re) {
+function pickInt(text: string, re: RegExp): number | null {
   const m = String(text).match(re);
   if (!m) return null;
   return Number(m[1]);

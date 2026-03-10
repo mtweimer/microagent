@@ -1,32 +1,29 @@
-// @ts-nocheck
 import { MemoryStore } from "./contracts.js";
+import type { AnyRecord, MemoryQueryHit, MemoryQueryResult, MemoryTurn } from "./contracts.js";
 
-function normalize(text) {
+function normalize(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
 }
 
-function tokenize(text) {
+function tokenize(text: string): string[] {
   const t = normalize(text);
   if (!t) return [];
-  return [...new Set(t.split(" "))];
+  return [...new Set(t.split(" ").filter(Boolean))];
 }
 
-/**
- * Minimal structured memory:
- * - stores turns
- * - builds an inverted term index
- * - supports basic query by term overlap
- */
 export class StructuredTurnMemory extends MemoryStore {
+  turns: MemoryQueryHit[];
+  termToTurnIds: Map<string, Set<number>>;
+
   constructor() {
     super();
     this.turns = [];
     this.termToTurnIds = new Map();
   }
 
-  addTurn(turn) {
+  override addTurn(turn: MemoryTurn & { timestamp?: string }): MemoryQueryHit {
     const id = this.turns.length;
-    const item = {
+    const item: MemoryQueryHit = {
       id,
       role: turn.role,
       text: turn.text,
@@ -35,19 +32,19 @@ export class StructuredTurnMemory extends MemoryStore {
     };
     this.turns.push(item);
 
-    const terms = tokenize(item.text);
+    const terms = tokenize(String(item.text ?? ""));
     for (const term of terms) {
       if (!this.termToTurnIds.has(term)) this.termToTurnIds.set(term, new Set());
-      this.termToTurnIds.get(term).add(id);
+      this.termToTurnIds.get(term)?.add(id);
     }
 
     return item;
   }
 
-  query(naturalLanguageQuery, options = {}) {
-    const topK = options.topK ?? 5;
+  override query(naturalLanguageQuery: string, options: AnyRecord = {}): MemoryQueryResult {
+    const topK = typeof options.topK === "number" ? options.topK : 5;
     const terms = tokenize(naturalLanguageQuery);
-    const scores = new Map();
+    const scores = new Map<number, number>();
 
     for (const term of terms) {
       const ids = this.termToTurnIds.get(term);
@@ -57,13 +54,15 @@ export class StructuredTurnMemory extends MemoryStore {
       }
     }
 
-    let ranked = [...scores.entries()]
+    const ranked: MemoryQueryHit[] = [...scores.entries()]
       .sort((a, b) => b[1] - a[1])
       .slice(0, topK)
-      .map(([id, score]) => ({ ...this.turns[id], score }));
+      .flatMap(([id, score]) => {
+        const turn = this.turns[id];
+        if (!turn) return [];
+        return [{ ...turn, score }];
+      });
 
-    // Add recent turns as supporting context so broad queries can still surface
-    // relevant nearby facts even when lexical overlap is sparse.
     const used = new Set(ranked.map((r) => r.id));
     for (const turn of [...this.turns].reverse()) {
       if (ranked.length >= topK) break;
@@ -71,10 +70,6 @@ export class StructuredTurnMemory extends MemoryStore {
       ranked.push({ ...turn, score: 0 });
     }
 
-    return {
-      query: naturalLanguageQuery,
-      terms,
-      results: ranked
-    };
+    return { results: ranked };
   }
 }

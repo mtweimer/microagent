@@ -63,9 +63,18 @@ To use from PATH:
 3. Run `microclaw run --profile default`
 
 Helper modes:
-- `microclaw up --profile default` (doctor then run)
+- `microclaw run --profile default`
+- `microclaw up --profile default` (doctor then interactive run)
+- `microclaw down`
+- `microclaw build`
+- `microclaw rebuild`
+- `microclaw update` (safe local refresh: `npm install && npm run build`)
 - `microclaw check --profile default`
-- `microclaw plugins validate --profile default`
+
+Lightweight verification:
+- `npm run typecheck:lite`
+- `npm run test:lite`
+- `npm run verify:lite`
 
 ## Interactive slash commands
 

@@ -1,4 +1,3 @@
-// @ts-nocheck
 const ACTION_PREFIXES = [
   "schedule",
   "create",
@@ -40,7 +39,12 @@ const MEMORY_VERBS = [
   "told"
 ];
 
-export function classifyIntent(input, domain) {
+export type IntentClassification =
+  | { type: "action"; reason: string }
+  | { type: "memory_statement"; reason: string }
+  | { type: "clarify"; reason: string };
+
+export function classifyIntent(input: string, domain: string | null): IntentClassification {
   if (!domain) return { type: "clarify", reason: "no_domain" };
 
   const text = String(input ?? "").trim();
@@ -57,13 +61,13 @@ export function classifyIntent(input, domain) {
   return { type: "clarify", reason: "ambiguous" };
 }
 
-function isActionLike(lower) {
+function isActionLike(lower: string): boolean {
   if (!lower) return false;
   if (lower.includes("?")) return true;
-  return ACTION_PREFIXES.some((prefix) => lower.startsWith(prefix + " ") || lower === prefix);
+  return ACTION_PREFIXES.some((prefix) => lower.startsWith(`${prefix} `) || lower === prefix);
 }
 
-function isMemoryStatement(text, lower) {
+function isMemoryStatement(text: string, lower: string): boolean {
   if (!lower) return false;
   if (lower.includes("?")) return false;
   const startsDeclarative =

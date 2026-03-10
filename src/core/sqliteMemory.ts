@@ -1,37 +1,75 @@
-// @ts-nocheck
 import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { MemoryStore } from "./contracts.js";
+import type { AnyRecord, MemoryQueryHit, MemoryQueryResult, MemoryTurn } from "./contracts.js";
 
-function normalize(text) {
+interface MessageRow {
+  id: number;
+  role: string;
+  text: string;
+  timestamp: string;
+  source_agent: string | null;
+}
+
+interface ScoreRow {
+  message_id: number;
+  score: number;
+}
+
+interface CountRow {
+  count: number;
+}
+
+interface RelationRecord {
+  subject: string;
+  predicate: string;
+  object: string;
+}
+
+function normalize(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
 }
 
-function tokenize(text) {
+function tokenize(text: string): string[] {
   const t = normalize(text);
   if (!t) return [];
-  return [...new Set(t.split(" "))];
+  return [...new Set(t.split(" ").filter(Boolean))];
 }
 
-function extractTopic(text) {
+function extractTopic(text: string): string {
   const sentence = text.split(/[.!?]/)[0]?.trim() ?? text;
   return sentence.slice(0, 140);
 }
 
-function extractEntities(text) {
+function extractEntities(text: string): string[] {
   const matches = text.match(/\b[A-Z][a-zA-Z0-9]+\b/g) ?? [];
   return [...new Set(matches)].slice(0, 12);
 }
 
 export class SQLiteStructuredMemory extends MemoryStore {
-  constructor(dbPath) {
+  dbPath: string;
+  ready: boolean;
+  ftsEnabled?: boolean;
+  db!: DatabaseSync;
+  insertMessageStmt!: ReturnType<DatabaseSync["prepare"]>;
+  insertTopicStmt!: ReturnType<DatabaseSync["prepare"]>;
+  insertEntityStmt!: ReturnType<DatabaseSync["prepare"]>;
+  insertTermStmt!: ReturnType<DatabaseSync["prepare"]>;
+  insertRelationStmt!: ReturnType<DatabaseSync["prepare"]>;
+  insertFtsStmt!: ReturnType<DatabaseSync["prepare"]> | null;
+  searchTermsStmt!: ReturnType<DatabaseSync["prepare"]>;
+  searchMessagesByIdsStmt!: ReturnType<DatabaseSync["prepare"]>;
+  recentMessagesStmt!: ReturnType<DatabaseSync["prepare"]>;
+  statsStmt!: ReturnType<DatabaseSync["prepare"]>;
+
+  constructor(dbPath: string) {
     super();
     this.dbPath = path.resolve(process.cwd(), dbPath);
     this.ready = false;
   }
 
-  initialize() {
+  initialize(): void {
     if (this.ready) return;
 
     const dir = path.dirname(this.dbPath);
@@ -136,7 +174,7 @@ export class SQLiteStructuredMemory extends MemoryStore {
     this.ready = true;
   }
 
-  addTurn(turn) {
+  override addTurn(turn: MemoryTurn & { timestamp?: string }): MemoryQueryHit {
     this.initialize();
 
     const normalizedText = normalizeTurnText(turn.role, turn.text);
@@ -181,32 +219,34 @@ export class SQLiteStructuredMemory extends MemoryStore {
       role: item.role,
       text: item.text,
       timestamp: item.timestamp,
-      source: item.source
+      source: item.source,
+      score: 1
     };
   }
 
-  query(naturalLanguageQuery, options = {}) {
+  override query(naturalLanguageQuery: string, options: AnyRecord = {}): MemoryQueryResult {
     this.initialize();
 
-    const topK = options.topK ?? 5;
+    const topK = typeof options.topK === "number" ? options.topK : 5;
     const terms = tokenize(naturalLanguageQuery);
-    const raw = this.searchTermsStmt.all(JSON.stringify(terms), topK);
+    const raw = this.searchTermsStmt.all(JSON.stringify(terms), topK) as unknown as ScoreRow[];
 
-    const results = raw.map((r) => {
-      const row = this.searchMessagesByIdsStmt.get(r.message_id);
-      return {
+    const results: MemoryQueryHit[] = raw.flatMap((r) => {
+      const row = this.searchMessagesByIdsStmt.get(r.message_id) as MessageRow | undefined;
+      if (!row) return [];
+      return [{
         id: row.id,
         role: row.role,
         text: row.text,
         timestamp: row.timestamp,
         source: row.source_agent,
         score: Number(r.score)
-      };
+      }];
     });
 
     if (results.length < topK) {
       const used = new Set(results.map((r) => r.id));
-      const recent = this.recentMessagesStmt.all(topK * 2);
+      const recent = this.recentMessagesStmt.all(topK * 2) as unknown as MessageRow[];
       for (const row of recent) {
         if (results.length >= topK) break;
         if (used.has(row.id)) continue;
@@ -221,67 +261,65 @@ export class SQLiteStructuredMemory extends MemoryStore {
       }
     }
 
-    return {
-      query: naturalLanguageQuery,
-      terms,
-      results
-    };
+    return { results };
   }
 
-  stats() {
+  stats(): { backend: string; dbPath: string; messages: number; ftsEnabled: boolean | undefined } {
     this.initialize();
+    const countRow = this.statsStmt.get() as CountRow | undefined;
     return {
       backend: "sqlite",
       dbPath: this.dbPath,
-      messages: Number(this.statsStmt.get().count),
+      messages: Number(countRow?.count ?? 0),
       ftsEnabled: this.ftsEnabled
     };
   }
 }
 
-function extractRelations(text) {
-  const rels = [];
+function extractRelations(text: string): RelationRecord[] {
+  const rels: RelationRecord[] = [];
   const mailMatch = text.match(/\b([A-Z][a-z]+)\s+(?:sent|emailed)\s+(.+?)\s+to\s+([A-Z][a-z]+)/i);
   if (mailMatch) {
     rels.push({
-      subject: mailMatch[1],
+      subject: mailMatch[1] ?? "",
       predicate: "sent_to",
-      object: mailMatch[3]
+      object: mailMatch[3] ?? ""
     });
   }
   const meetMatch = text.match(/\b([A-Z][a-z]+)\s+met\s+with\s+([A-Z][a-z]+)/i);
   if (meetMatch) {
     rels.push({
-      subject: meetMatch[1],
+      subject: meetMatch[1] ?? "",
       predicate: "met_with",
-      object: meetMatch[2]
+      object: meetMatch[2] ?? ""
     });
   }
   return rels;
 }
 
-function normalizeTurnText(role, text) {
+function normalizeTurnText(role: string, text: string): string {
   if (typeof text !== "string") return String(text ?? "");
   if (role !== "assistant") return text;
   return summarizeAssistantText(text);
 }
 
-function summarizeAssistantText(text) {
+function summarizeAssistantText(text: string): string {
   const trimmed = text.trim();
   if (!trimmed.startsWith("{")) return text;
-  let parsed;
+  let parsed: AnyRecord;
   try {
-    parsed = JSON.parse(trimmed);
+    parsed = JSON.parse(trimmed) as AnyRecord;
   } catch {
     return text;
   }
 
   const status = parsed.status ? `status=${parsed.status}` : null;
-  const action = parsed.artifacts?.action;
+  const action = typeof parsed.artifacts === "object" && parsed.artifacts !== null ? (parsed.artifacts as AnyRecord).action as AnyRecord | undefined : undefined;
   const actionSummary = action ? `${action.agent}.${action.action}` : null;
   const message = typeof parsed.message === "string" ? parsed.message : null;
-  const provider = parsed.trace?.provider;
-  const model = parsed.trace?.model;
+  const trace = typeof parsed.trace === "object" && parsed.trace !== null ? (parsed.trace as AnyRecord) : {};
+  const provider = trace.provider;
+  const model = trace.model;
 
   const parts = [
     "assistant_result",

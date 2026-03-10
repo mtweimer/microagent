@@ -1,5 +1,39 @@
-// @ts-nocheck
-function resolveRange(timeRange, now = new Date()) {
+import type { ActionEnvelope, AgentExecutionContext, AgentExecutionResult, AnyRecord } from "../../../core/contracts.js";
+
+interface GraphDateTime {
+  dateTime?: string;
+  timeZone?: string;
+}
+
+interface GraphOnlineMeeting {
+  joinUrl?: string;
+}
+
+interface GraphLocation {
+  displayName?: string;
+}
+
+interface GraphEvent {
+  subject?: string;
+  start?: GraphDateTime;
+  end?: GraphDateTime;
+  webLink?: string;
+  isOnlineMeeting?: boolean;
+  onlineMeeting?: GraphOnlineMeeting;
+  location?: GraphLocation;
+  bodyPreview?: string;
+}
+
+function asRecord(value: unknown): AnyRecord {
+  return typeof value === "object" && value !== null ? (value as AnyRecord) : {};
+}
+
+function asEventList(value: unknown): GraphEvent[] {
+  const record = asRecord(value);
+  return Array.isArray(record.value) ? (record.value as GraphEvent[]) : [];
+}
+
+function resolveRange(timeRange: unknown, now = new Date()): { start: Date; end: Date } {
   const lower = String(timeRange ?? "upcoming").toLowerCase();
   const start = new Date(now);
   const end = new Date(now);
@@ -27,8 +61,14 @@ function resolveRange(timeRange, now = new Date()) {
   return { start, end };
 }
 
-export async function findEventsAction(env, ctx) {
+export async function findEventsAction(
+  env: ActionEnvelope,
+  ctx: AgentExecutionContext
+): Promise<AgentExecutionResult> {
   const graph = ctx.graphClient;
+  if (!graph?.get) {
+    return { status: "error", message: "Graph client is not configured." };
+  }
   const range = resolveRange(env.params?.timeRange, new Date());
   const startDateTime = encodeURIComponent(range.start.toISOString());
   const endDateTime = encodeURIComponent(range.end.toISOString());
@@ -40,7 +80,7 @@ export async function findEventsAction(env, ctx) {
     "&$select=subject,start,end,webLink,isOnlineMeeting,onlineMeeting,location,bodyPreview" +
     "&$orderby=start/dateTime";
   const data = await graph.get(path);
-  const events = (data.value ?? []).map((e) => ({
+  const events = asEventList(data).map((e) => ({
     subject: e.subject,
     start: e.start,
     end: e.end,

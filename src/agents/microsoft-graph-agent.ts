@@ -1,5 +1,5 @@
-// @ts-nocheck
 import { Agent } from "../core/contracts.js";
+import type { AnyRecord, MemoryQueryHit } from "../core/contracts.js";
 
 const KEYWORDS = {
   outlook: ["email", "outlook", "mail", "inbox", "reply", "send"],
@@ -7,11 +7,21 @@ const KEYWORDS = {
   teams: ["teams", "channel", "chat", "standup", "meeting notes"],
   sharepoint: ["sharepoint", "site", "document library"],
   onedrive: ["onedrive", "file", "folder", "upload", "sync"]
-};
+} as const;
 
-function findDomain(input) {
+type GraphDomain = keyof typeof KEYWORDS;
+
+interface GraphPlanResult {
+  type: "plan" | "noop";
+  text: string;
+  domain: GraphDomain | null;
+  followups?: string[];
+  contextSummary?: MemoryQueryHit[];
+}
+
+function findDomain(input: string): GraphDomain | null {
   const lower = input.toLowerCase();
-  for (const [domain, words] of Object.entries(KEYWORDS)) {
+  for (const [domain, words] of Object.entries(KEYWORDS) as Array<[GraphDomain, readonly string[]]>) {
     if (words.some((w) => lower.includes(w))) return domain;
   }
   return null;
@@ -25,11 +35,11 @@ export class MicrosoftGraphAgent extends Agent {
     );
   }
 
-  async canHandle(input) {
+  override async canHandle(input: string): Promise<boolean> {
     return findDomain(input) !== null;
   }
 
-  async handle(input, context) {
+  override async handle(input: string, context: AnyRecord): Promise<GraphPlanResult> {
     const domain = findDomain(input);
     if (!domain) {
       return {
@@ -49,7 +59,13 @@ export class MicrosoftGraphAgent extends Agent {
         "Execute against provider",
         "Store action result in memory"
       ],
-      contextSummary: context.memory.query(input, { topK: 3 }).results
+      contextSummary:
+        typeof context.memory === "object" &&
+        context.memory !== null &&
+        "query" in context.memory &&
+        typeof (context.memory as { query?: (text: string, options?: AnyRecord) => { results?: MemoryQueryHit[] } }).query === "function"
+          ? ((context.memory as { query: (text: string, options?: AnyRecord) => { results?: MemoryQueryHit[] } }).query(input, { topK: 3 }).results ?? [])
+          : []
     };
   }
 }

@@ -1,4 +1,3 @@
-// @ts-nocheck
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -10,17 +9,23 @@ import {
   discoverAgentManifests,
   getAgentCatalog
 } from "../src/agents/catalog.js";
-import { ACTION_REGISTRY } from "../src/contracts/actionRegistry.js";
+import { ACTION_REGISTRY, type DomainName } from "../src/contracts/actionRegistry.js";
+
+type ManifestLike = {
+  agentId?: string;
+  id?: string;
+  actions?: Iterable<string>;
+};
 
 test("default agent manifests align with action registry domains", async () => {
   const agents = await createDefaultAgents();
   const domainByAgentId = Object.fromEntries(
     Object.entries(ACTION_REGISTRY).map(([domain, cfg]) => [cfg.agentId, domain])
-  );
+  ) as Record<string, DomainName>;
 
   for (const agent of agents) {
     if (!domainByAgentId[agent.id]) continue;
-    const manifest = agent.manifest;
+    const manifest = ("manifest" in agent ? agent.manifest : null) as ManifestLike | null;
     assert.ok(manifest, `agent ${agent.id} should expose manifest`);
     const manifestAgentId = manifest.agentId ?? manifest.id;
     assert.equal(manifestAgentId, agent.id, `manifest id should match agent id for ${agent.id}`);
@@ -28,7 +33,7 @@ test("default agent manifests align with action registry domains", async () => {
     assert.ok(domain, `domain should exist for ${agent.id}`);
     const registryActions = Object.keys(ACTION_REGISTRY[domain].actions);
     assert.deepEqual(
-      [...manifest.actions].sort(),
+      [...(manifest.actions ?? [])].sort(),
       [...registryActions].sort(),
       `manifest actions should match registry for ${agent.id}`
     );
@@ -83,10 +88,10 @@ test("external plugin agent loads from custom agent path without catalog edits",
     enabled: ["custom.echo"]
   });
   assert.equal(agents.length, 1);
-  assert.equal(agents[0].id, "custom.echo");
+  assert.equal(agents[0]?.id, "custom.echo");
 
   const catalog = await getAgentCatalog({ agentPaths: [root] });
   const plugin = catalog.find((row) => row.id === "custom.echo");
   assert.ok(plugin);
-  assert.equal(plugin.implemented, true);
+  assert.equal(plugin?.implemented, true);
 });

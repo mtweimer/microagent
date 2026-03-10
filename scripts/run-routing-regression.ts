@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { Dispatcher } from "../src/core/dispatcher.js";
 import { StructuredTurnMemory } from "../src/core/memory.js";
 import { InMemoryTranslationCache } from "../src/core/cache.js";
@@ -10,8 +9,40 @@ import { FileBackedGrammarStore } from "../src/core/grammarStore.js";
 import { NarrativeMemory } from "../src/core/narrativeMemory.js";
 import { loadPersonaContext } from "../src/core/personaContext.js";
 import { PersonaOverlayManager } from "../src/core/personaOverlayManager.js";
+import type { AnyRecord, DispatcherResponse } from "../src/core/contracts.js";
 
-const CASES = [
+type CacheMode = "completionBased" | "nfa";
+
+interface RoutingCaseExpect {
+  status?: string;
+  conversationMode?: string;
+  capabilityGrounded?: boolean;
+  agent?: string;
+  action?: string;
+  retrievalPlanDomain?: string;
+}
+
+interface RoutingCase {
+  id: string;
+  input: string;
+  expect: RoutingCaseExpect;
+}
+
+interface ModeRun {
+  mode: CacheMode;
+  pass: number;
+  fail: number;
+  total: number;
+  rows: Array<{
+    id: string;
+    input: string;
+    ok: boolean;
+    expected: RoutingCaseExpect;
+    actual: AnyRecord;
+  }>;
+}
+
+const CASES: RoutingCase[] = [
   {
     id: "chat_identity",
     input: "who are you and what's your purpose?",
@@ -39,9 +70,9 @@ const CASES = [
   }
 ];
 
-const MODES = ["completionBased", "nfa"];
+const MODES: CacheMode[] = ["completionBased", "nfa"];
 
-const results = [];
+const results: ModeRun[] = [];
 for (const mode of MODES) {
   const run = await runMode(mode);
   results.push(run);
@@ -58,7 +89,7 @@ const output = {
 console.log(JSON.stringify(output, null, 2));
 if (totals.fail > 0) process.exit(1);
 
-async function runMode(mode) {
+async function runMode(mode: CacheMode): Promise<ModeRun> {
   const patternCache = new FileBackedPatternCache("./data/test-routing-pattern-cache.json");
   const grammarStore = new FileBackedGrammarStore("./data/test-routing-grammar-store.json");
   patternCache.clear();
@@ -71,9 +102,11 @@ async function runMode(mode) {
     modelGateway: new ModelGateway(process.env),
     graphClient: createMockGraphClient(),
     personaContext: loadPersonaContext("default"),
-    narrativeMemory: new NarrativeMemory("./data/test-routing-narrative.jsonl"),
-    patternCache,
-    grammarStore,
+    narrativeMemory: new NarrativeMemory("./data/test-routing-narrative.jsonl") as unknown as NonNullable<
+      ConstructorParameters<typeof Dispatcher>[0]["narrativeMemory"]
+    >,
+    patternCache: patternCache as unknown as AnyRecord,
+    grammarStore: grammarStore as unknown as AnyRecord,
     personaOverlayManager: new PersonaOverlayManager("default"),
     cacheConfig: {
       enabled: true,
@@ -84,7 +117,7 @@ async function runMode(mode) {
     }
   });
 
-  const rows = [];
+  const rows: ModeRun["rows"] = [];
   let pass = 0;
   let fail = 0;
   for (const item of CASES) {
@@ -117,7 +150,7 @@ async function runMode(mode) {
   };
 }
 
-function evaluate(out, expected) {
+function evaluate(out: DispatcherResponse, expected: RoutingCaseExpect): boolean {
   if (expected.status && out.status !== expected.status) return false;
   if (expected.conversationMode && out.conversationMode !== expected.conversationMode) return false;
   if (
@@ -132,7 +165,7 @@ function evaluate(out, expected) {
   return true;
 }
 
-function summarize(runs) {
+function summarize(runs: ModeRun[]): { pass: number; fail: number; total: number } {
   let pass = 0;
   let fail = 0;
   let total = 0;
@@ -144,14 +177,17 @@ function summarize(runs) {
   return { pass, fail, total };
 }
 
-function createMockGraphClient() {
+function createMockGraphClient(): {
+  get(path: string): Promise<Record<string, unknown>>;
+  post(path: string, body: AnyRecord): Promise<Record<string, unknown>>;
+} {
   return {
-    async get(path) {
+    async get(path: string) {
       if (path.startsWith("/me/calendarView")) return { value: [] };
       if (path.startsWith("/me/messages")) return { value: [] };
       return {};
     },
-    async post(path, body) {
+    async post(path: string, body: AnyRecord) {
       if (path === "/me/events") {
         return {
           id: "mock-event-id",

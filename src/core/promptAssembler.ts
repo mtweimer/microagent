@@ -1,4 +1,4 @@
-import { composePersonaInstructions } from "./personaContext.js";
+import { composePersonaInstructions, type PersonaContext } from "./personaContext.js";
 import type { ComposerMessage, CapabilityPack, ActionEnvelope, AgentExecutionResult } from "./contracts.js";
 
 interface BudgetConfig {
@@ -11,7 +11,7 @@ interface AssembleComposerInput {
   input: string;
   actionEnvelope: ActionEnvelope | null;
   executionResult: AgentExecutionResult | { status: string; message: string } | null;
-  personaContext?: unknown;
+  personaContext?: PersonaContext | null | undefined;
   capabilityPack: CapabilityPack;
   memoryEvidence?: unknown[];
   narrativeEntries?: unknown[];
@@ -20,7 +20,7 @@ interface AssembleComposerInput {
 
 interface AssembleChatInput {
   input: string;
-  personaContext?: unknown;
+  personaContext?: PersonaContext | null | undefined;
   capabilityPack: CapabilityPack;
   memoryEvidence?: unknown[];
   narrativeEntries?: unknown[];

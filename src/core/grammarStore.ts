@@ -1,22 +1,37 @@
-// @ts-nocheck
 import fs from "node:fs";
 import path from "node:path";
+import type { ActionEnvelope, AnyRecord } from "./contracts.js";
+
+interface GrammarRule {
+  domain: string | null;
+  tokens: string[];
+  envelope: {
+    agent: string;
+    action: string;
+    params: AnyRecord;
+    schemaVersion?: string;
+  };
+  timestamp: string;
+}
 
 export class FileBackedGrammarStore {
-  constructor(filePath) {
+  filePath: string;
+  rules: GrammarRule[];
+
+  constructor(filePath: string) {
     this.filePath = path.resolve(process.cwd(), filePath);
     this.rules = [];
     this.load();
   }
 
-  load() {
+  load(): void {
     if (!fs.existsSync(this.filePath)) return;
-    const data = JSON.parse(fs.readFileSync(this.filePath, "utf8"));
+    const data = JSON.parse(fs.readFileSync(this.filePath, "utf8")) as { rules?: GrammarRule[] };
     if (!Array.isArray(data?.rules)) return;
     this.rules = data.rules;
   }
 
-  learn(input, domain, envelope) {
+  learn(input: string, domain: string | null, envelope: ActionEnvelope): void {
     const tokens = tokenize(input);
     if (!tokens.length) return;
     this.rules.push({
@@ -34,10 +49,10 @@ export class FileBackedGrammarStore {
     this.save();
   }
 
-  lookup(input, domain) {
+  lookup(input: string, domain: string | null): GrammarRule["envelope"] | null {
     const queryTokens = tokenize(input);
     if (!queryTokens.length) return null;
-    let best = null;
+    let best: GrammarRule | null = null;
     let bestScore = 0;
     for (const rule of this.rules) {
       if (rule.domain !== domain) continue;
@@ -51,26 +66,26 @@ export class FileBackedGrammarStore {
     return best.envelope;
   }
 
-  clear() {
+  clear(): void {
     this.rules = [];
     this.save();
   }
 
-  stats() {
+  stats(): { rules: number; filePath: string } {
     return {
       rules: this.rules.length,
       filePath: this.filePath
     };
   }
 
-  save() {
+  save(): void {
     const dir = path.dirname(this.filePath);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(this.filePath, JSON.stringify({ rules: this.rules }, null, 2));
   }
 }
 
-function tokenize(input) {
+function tokenize(input: string): string[] {
   return String(input ?? "")
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, " ")
@@ -79,7 +94,7 @@ function tokenize(input) {
     .filter((t) => t.length > 2);
 }
 
-function overlapScore(a, b) {
+function overlapScore(a: string[], b: string[]): number {
   const setA = new Set(a);
   const setB = new Set(b);
   let common = 0;

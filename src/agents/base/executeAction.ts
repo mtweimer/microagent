@@ -1,7 +1,28 @@
-// @ts-nocheck
 import { getActionConfig } from "../../contracts/actionRegistry.js";
+import type { ActionEnvelope, AgentExecutionContext, AgentExecutionResult, ExecutionStatus } from "../../core/contracts.js";
 
-export async function executeAction({ envelope, context, handlers, fallbackErrorMessage }) {
+type ActionHandler = (
+  envelope: ActionEnvelope,
+  context: AgentExecutionContext
+) => Promise<AgentExecutionResult>;
+
+interface ExecuteActionInput {
+  envelope: ActionEnvelope;
+  context: AgentExecutionContext;
+  handlers: Record<string, ActionHandler>;
+  fallbackErrorMessage?: string;
+}
+
+function normalizeStatus(value: unknown): ExecutionStatus {
+  return value === "ok" || value === "error" || value === "clarify" || value === "unsupported" ? value : "error";
+}
+
+export async function executeAction({
+  envelope,
+  context,
+  handlers,
+  fallbackErrorMessage
+}: ExecuteActionInput): Promise<AgentExecutionResult> {
   const actionCfg = getActionConfig(envelope.agent, envelope.action);
   if (!actionCfg) {
     return {
@@ -28,15 +49,19 @@ export async function executeAction({ envelope, context, handlers, fallbackError
 
   try {
     const result = await handler(envelope, context);
+    const artifacts =
+      typeof result?.artifacts === "object" && result.artifacts !== null
+        ? (result.artifacts as Record<string, unknown>)
+        : {};
     return {
-      status: result?.status ?? "ok",
+      status: normalizeStatus(result?.status),
       message: result?.message ?? "Action completed.",
-      artifacts: result?.artifacts ?? {}
+      artifacts
     };
   } catch (error) {
     return {
       status: "error",
-      message: error?.message ?? "Action execution failed"
+      message: error instanceof Error ? error.message : "Action execution failed"
     };
   }
 }

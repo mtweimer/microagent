@@ -1,13 +1,13 @@
-// @ts-nocheck
 import test from "node:test";
 import assert from "node:assert/strict";
 
 import { composeWithFallback } from "../src/core/composerGateway.js";
+import { makeModelGateway } from "./helpers.js";
 
 test("composer gateway retries fallback on low confidence", async () => {
-  const calls = [];
-  const modelGateway = {
-    async completeJson(_messages, options = {}) {
+  const calls: Array<string | undefined> = [];
+  const modelGateway = makeModelGateway({
+    async completeJson(_messages: unknown, options: { model?: string } = {}) {
       calls.push(options.model);
       if (options.model === "primary") {
         return {
@@ -28,7 +28,7 @@ test("composer gateway retries fallback on low confidence", async () => {
         confidence: 0.9
       };
     }
-  };
+  });
 
   const out = await composeWithFallback({
     modelGateway,
@@ -42,4 +42,3 @@ test("composer gateway retries fallback on low confidence", async () => {
   assert.equal(out.used, "fallback");
   assert.deepEqual(calls, ["primary", "fallback"]);
 });
-

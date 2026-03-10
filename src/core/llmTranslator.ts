@@ -1,4 +1,3 @@
-// @ts-nocheck
 import crypto from "node:crypto";
 import { translateHeuristic } from "./translator.js";
 import {
@@ -7,21 +6,40 @@ import {
   getAgentByDomain,
   getDomainConfig
 } from "../contracts/actionRegistry.js";
+import type { ActionName, DomainName } from "../contracts/actionRegistry.js";
 import { validateActionEnvelope } from "./schema.js";
+import type { ActionEnvelope, AnyRecord, ModelGatewayLike, TranslationResult } from "./contracts.js";
 
 const CONFIDENCE_CLARIFY_THRESHOLD = 0.65;
 
-export async function translateRequest(input, domain, modelGateway) {
+interface AuthCheckResult {
+  ok: boolean;
+}
+
+interface LlmGateway extends ModelGatewayLike {
+  checkAuth?: (provider: string) => AuthCheckResult;
+}
+
+function asRecord(value: unknown): AnyRecord {
+  return typeof value === "object" && value !== null ? (value as AnyRecord) : {};
+}
+
+export async function translateRequest(
+  input: string,
+  domain: DomainName,
+  modelGateway: ModelGatewayLike | null
+): Promise<TranslationResult> {
   const heuristic = withSchemaVersion(translateHeuristic(input, domain));
   if (!modelGateway) return toResult(heuristic, "heuristic");
 
-  const provider = modelGateway.getActiveProvider();
-  const auth = modelGateway.checkAuth(provider);
+  const gateway = modelGateway as LlmGateway;
+  const provider = modelGateway.getActiveProvider?.() ?? "none";
+  const auth = gateway.checkAuth?.(provider) ?? { ok: true };
   if (!auth.ok && provider !== "ollama") {
     return toResult(heuristic, "heuristic");
   }
 
-  let translated;
+  let translated: ActionEnvelope;
   try {
     translated = await attemptLlmTranslation({
       input,
@@ -34,11 +52,11 @@ export async function translateRequest(input, domain, modelGateway) {
   }
 
   const firstValidation = validateActionEnvelope(translated);
-  if (firstValidation.ok && translated.confidence >= CONFIDENCE_CLARIFY_THRESHOLD) {
+  if (firstValidation.ok && (translated.confidence ?? 0) >= CONFIDENCE_CLARIFY_THRESHOLD) {
     return toResult(translated, "llm", []);
   }
 
-  let corrected;
+  let corrected: ActionEnvelope;
   try {
     corrected = await attemptLlmTranslation({
       input,
@@ -50,15 +68,14 @@ export async function translateRequest(input, domain, modelGateway) {
     return toResult(heuristic, "heuristic", firstValidation.errors);
   }
   const secondValidation = validateActionEnvelope(corrected);
-  if (secondValidation.ok && corrected.confidence >= CONFIDENCE_CLARIFY_THRESHOLD) {
+  if (secondValidation.ok && (corrected.confidence ?? 0) >= CONFIDENCE_CLARIFY_THRESHOLD) {
     return toResult(corrected, "llm_corrected", []);
   }
 
-  const fallback = heuristic;
-  return toResult(fallback, "heuristic", secondValidation.errors);
+  return toResult(heuristic, "heuristic", secondValidation.errors);
 }
 
-function withSchemaVersion(envelope) {
+function withSchemaVersion(envelope: ActionEnvelope): ActionEnvelope {
   return {
     ...envelope,
     schemaVersion: ACTION_REGISTRY_VERSION,
@@ -68,7 +85,17 @@ function withSchemaVersion(envelope) {
   };
 }
 
-async function attemptLlmTranslation({ input, domain, modelGateway, correctionErrors }) {
+async function attemptLlmTranslation({
+  input,
+  domain,
+  modelGateway,
+  correctionErrors
+}: {
+  input: string;
+  domain: DomainName;
+  modelGateway: ModelGatewayLike;
+  correctionErrors: string[];
+}): Promise<ActionEnvelope> {
   const allowedActions = getActionsByDomain(domain);
   const expectedAgent = getAgentByDomain(domain) ?? "dispatcher";
   const domainCfg = getDomainConfig(domain);
@@ -82,13 +109,13 @@ async function attemptLlmTranslation({ input, domain, modelGateway, correctionEr
 
   const messages = [
     {
-      role: "system",
+      role: "system" as const,
       content:
         "You are an action translator. Return strict JSON only (no markdown). " +
         "Fields: agent, action, params, confidence, requiresConfirmation, schemaVersion."
     },
     {
-      role: "user",
+      role: "user" as const,
       content:
         `Domain: ${domain}\n` +
         `ExpectedAgent: ${expectedAgent}\n` +
@@ -105,18 +132,19 @@ async function attemptLlmTranslation({ input, domain, modelGateway, correctionEr
   return normalizeEnvelope(json, domain, input);
 }
 
-function normalizeEnvelope(value, domain, input) {
+function normalizeEnvelope(value: unknown, domain: DomainName, input: string): ActionEnvelope {
+  const typed = asRecord(value);
   if (!value || typeof value !== "object") return mkInvalidEnvelope(domain, input);
 
   const expectedAgent = getAgentByDomain(domain) ?? "dispatcher";
   const allowed = getActionsByDomain(domain);
 
-  let action = String(value.action ?? "").trim();
-  if (action.includes(".")) action = action.split(".").pop();
+  let action = String(typed.action ?? "").trim();
+  if (action.includes(".")) action = action.split(".").pop() ?? "";
   action = disambiguateAction(domain, action, input);
-  if (!allowed.includes(action)) return mkInvalidEnvelope(domain, input, action || "invalid_action");
+  if (!allowed.includes(action as ActionName)) return mkInvalidEnvelope(domain, input, action || "invalid_action");
 
-  const params = typeof value.params === "object" && value.params !== null ? value.params : {};
+  const params = typeof typed.params === "object" && typed.params !== null ? (typed.params as AnyRecord) : {};
 
   if (domain === "calendar" && action === "schedule_event") {
     if (!params.title) params.title = input;
@@ -163,16 +191,16 @@ function normalizeEnvelope(value, domain, input) {
 
   return {
     requestId: crypto.randomUUID(),
+    schemaVersion: ACTION_REGISTRY_VERSION,
     agent: expectedAgent,
-    action,
+    action: action as ActionName,
     params,
-    confidence: clampNumber(value.confidence, 0.1, 1.0, 0.8),
-    requiresConfirmation: Boolean(value.requiresConfirmation),
-    schemaVersion: ACTION_REGISTRY_VERSION
+    confidence: clampNumber(typed.confidence, 0.1, 1.0, 0.8),
+    requiresConfirmation: Boolean(typed.requiresConfirmation)
   };
 }
 
-function disambiguateAction(domain, action, input) {
+function disambiguateAction(domain: DomainName, action: string, input: string): string {
   const lower = String(input ?? "").toLowerCase();
   const hasReadVerb = /\bread\b/.test(lower);
   if (domain === "outlook") {
@@ -233,9 +261,9 @@ function disambiguateAction(domain, action, input) {
   return action;
 }
 
-function parseTeamsDirectives(input) {
+function parseTeamsDirectives(input: string): AnyRecord {
   const lower = String(input ?? "").toLowerCase();
-  const out = {};
+  const out: AnyRecord = {};
   const top = lower.match(/\btop\s*=\s*(\d{1,3})\b/);
   if (top) out.top = Math.max(1, Math.min(100, Number(top[1])));
   const surface = lower.match(/\bsurface\s*=\s*(chats|channels|both)\b/);
@@ -245,13 +273,13 @@ function parseTeamsDirectives(input) {
   const depth = lower.match(/\bdepth\s*=\s*(fast|balanced|deep)\b/);
   if (depth) out.depth = depth[1];
   const team = lower.match(/\bteam\s*=\s*([^\s]+)/);
-  if (team) out.team = decodeDirectiveValue(team[1]);
+  if (team?.[1]) out.team = decodeDirectiveValue(team[1]);
   const channel = lower.match(/\bchannel\s*=\s*([^\s]+)/);
-  if (channel) out.channel = decodeDirectiveValue(channel[1]);
+  if (channel?.[1]) out.channel = decodeDirectiveValue(channel[1]);
   return out;
 }
 
-function sanitizeTeamsQuery(value, input) {
+function sanitizeTeamsQuery(value: unknown, input: string): string {
   const forced = extractTeamsQueryFromInput(input);
   if (forced) return forced;
   const primary = String(value ?? "").trim();
@@ -265,7 +293,7 @@ function sanitizeTeamsQuery(value, input) {
   return text || fallback;
 }
 
-function extractTeamsQueryFromInput(input) {
+function extractTeamsQueryFromInput(input: string): string {
   let text = String(input ?? "").trim();
   const original = text;
   text = text.replace(/\b(?:window|surface|depth|top|team|channel)\s*=\s*[^\s]+/gi, " ").replace(/\s+/g, " ").trim();
@@ -282,14 +310,14 @@ function extractTeamsQueryFromInput(input) {
   return "";
 }
 
-function decodeDirectiveValue(value) {
+function decodeDirectiveValue(value: string): string {
   return String(value ?? "")
     .replace(/^['"]|['"]$/g, "")
     .replace(/_/g, " ")
     .trim();
 }
 
-function extractTopN(lower) {
+function extractTopN(lower: string): number | null {
   const m = String(lower ?? "").match(/\b(?:last|latest)\s+(\d{1,2})\b/);
   if (!m) return null;
   const n = Number(m[1]);
@@ -297,30 +325,30 @@ function extractTopN(lower) {
   return Math.min(50, n);
 }
 
-function mkInvalidEnvelope(domain, input, action = "invalid_action") {
+function mkInvalidEnvelope(domain: DomainName, input: string, action = "invalid_action"): ActionEnvelope {
   return {
     requestId: crypto.randomUUID(),
+    schemaVersion: ACTION_REGISTRY_VERSION,
     agent: getAgentByDomain(domain) ?? "dispatcher",
-    action,
+    action: action as ActionName,
     params: { input },
     confidence: 0.2,
-    requiresConfirmation: true,
-    schemaVersion: ACTION_REGISTRY_VERSION
+    requiresConfirmation: true
   };
 }
 
-function extractEmails(text) {
+function extractEmails(text: string): string[] {
   const matches = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) ?? [];
   return [...new Set(matches.map((m) => m.toLowerCase()))];
 }
 
-function clampNumber(v, min, max, fallback) {
+function clampNumber(v: unknown, min: number, max: number, fallback: number): number {
   const n = Number(v);
   if (Number.isNaN(n)) return fallback;
   return Math.min(max, Math.max(min, n));
 }
 
-function toResult(envelope, source, validationErrors = []) {
+function toResult(envelope: ActionEnvelope, source: string, validationErrors: string[] = []): TranslationResult {
   return {
     envelope,
     source,
@@ -328,7 +356,7 @@ function toResult(envelope, source, validationErrors = []) {
   };
 }
 
-function isEmailFollowUpQuestion(lower) {
+function isEmailFollowUpQuestion(lower: string): boolean {
   if (!lower.includes("?")) return false;
   return (
     lower.includes("what did they want") ||

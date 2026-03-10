@@ -16,6 +16,7 @@
     "run": "tsx src/cli.ts run",
     "doctor": "tsx src/cli.ts doctor",
     "check": "tsx src/cli.ts check",
+    "check:lite": "npm run typecheck:lite && npm run test:lite",
     "profile:list": "tsx src/cli.ts profile list",
     "profile:show": "tsx src/cli.ts profile show --profile default",
     "profile:validate": "tsx src/cli.ts profile validate --profile default",
@@ -23,10 +24,15 @@
     "schema:check": "tsx scripts/schema-check.ts",
     "plugins:validate": "tsx src/cli.ts plugins validate --profile default",
     "test": "tsx --test tests/*.test.ts",
+    "test:lite": "tsx --test tests/dispatcher.test.ts tests/followupResolver.test.ts tests/reviewOrchestrator.test.ts tests/outlookAgent.test.ts tests/calendarAgent.test.ts tests/teamsAgent.test.ts tests/teamsIndex.test.ts tests/responseComposer.test.ts",
+    "build": "tsx scripts/build.ts",
+    "update": "npm install && npm run build",
     "bench": "tsx scripts/run-bench.ts",
     "prompt:test": "tsx scripts/run-prompt-tests.ts",
     "routing:test": "tsx scripts/run-routing-regression.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "typecheck:lite": "tsc --noEmit --pretty false",
+    "verify:lite": "npm run typecheck:lite && npm run test:lite && npm run check"
   },
   "devDependencies": {
     "@types/node": "^25.4.0",

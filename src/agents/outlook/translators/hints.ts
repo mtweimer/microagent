@@ -1,5 +1,4 @@
-// @ts-nocheck
-export const OUTLOOK_TRANSLATION_HINTS = {
+export const OUTLOOK_TRANSLATION_HINTS: Record<string, string> = {
   search_email: "Search email messages by natural language query.",
   send_email: "Send an email to recipients.",
   list_recent_emails: "List most recent emails, optionally by count.",

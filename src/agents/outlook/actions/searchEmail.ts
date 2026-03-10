@@ -1,9 +1,36 @@
-// @ts-nocheck
-export async function searchEmailAction(env, ctx) {
+import type { ActionEnvelope, AgentExecutionContext, AgentExecutionResult, AnyRecord } from "../../../core/contracts.js";
+
+interface GraphMessage {
+  id?: string;
+  subject?: string;
+  from?: {
+    emailAddress?: {
+      address?: string;
+    };
+  };
+  receivedDateTime?: string;
+}
+
+function asRecord(value: unknown): AnyRecord {
+  return typeof value === "object" && value !== null ? (value as AnyRecord) : {};
+}
+
+function asMessageList(value: unknown): GraphMessage[] {
+  const record = asRecord(value);
+  return Array.isArray(record.value) ? (record.value as GraphMessage[]) : [];
+}
+
+export async function searchEmailAction(
+  env: ActionEnvelope,
+  ctx: AgentExecutionContext
+): Promise<AgentExecutionResult> {
   const graph = ctx.graphClient;
+  if (!graph?.get) {
+    return { status: "error", message: "Graph client is not configured." };
+  }
   const search = buildSearchSpec(env.params?.query ?? "");
   const data = await graph.get(search.path);
-  const messages = (data.value ?? []).map((m) => ({
+  const messages = asMessageList(data).map((m) => ({
     id: m.id,
     subject: m.subject,
     from: m.from?.emailAddress?.address,
@@ -17,7 +44,7 @@ export async function searchEmailAction(env, ctx) {
   };
 }
 
-export function buildSearchSpec(query) {
+export function buildSearchSpec(query: unknown): { mode: string; path: string } {
   const q = String(query ?? "").trim();
   const lower = q.toLowerCase();
   const hasUnread = lower.includes("unread");
@@ -62,7 +89,7 @@ export function buildSearchSpec(query) {
   };
 }
 
-function extractTopN(text) {
+function extractTopN(text: string): number | null {
   const m = text.match(/\b(?:last|latest)\s+(\d{1,2})\b/);
   if (!m) return null;
   const n = Number(m[1]);

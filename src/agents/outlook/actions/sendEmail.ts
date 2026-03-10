@@ -1,7 +1,31 @@
-// @ts-nocheck
-export async function sendEmailAction(env, ctx) {
+import type { ActionEnvelope, AgentExecutionContext, AgentExecutionResult } from "../../../core/contracts.js";
+
+interface GraphRecipient {
+  emailAddress: {
+    address: string;
+  };
+}
+
+interface SendMailMessage {
+  subject: string;
+  body: {
+    contentType: "Text";
+    content: string;
+  };
+  toRecipients: GraphRecipient[];
+}
+
+export async function sendEmailAction(
+  env: ActionEnvelope,
+  ctx: AgentExecutionContext
+): Promise<AgentExecutionResult> {
   const graph = ctx.graphClient;
-  const to = Array.isArray(env.params?.to) ? env.params.to : [];
+  if (!graph?.post) {
+    return { status: "error", message: "Graph client is not configured." };
+  }
+  const to = Array.isArray(env.params?.to)
+    ? env.params.to.filter((addr): addr is string => typeof addr === "string" && addr.trim().length > 0)
+    : [];
   if (to.length === 0) {
     return {
       status: "error",
@@ -9,11 +33,11 @@ export async function sendEmailAction(env, ctx) {
     };
   }
 
-  const message = {
-    subject: env.params.subject || "(no subject)",
+  const message: SendMailMessage = {
+    subject: typeof env.params.subject === "string" ? env.params.subject : "(no subject)",
     body: {
       contentType: "Text",
-      content: env.params.body || ""
+      content: typeof env.params.body === "string" ? env.params.body : ""
     },
     toRecipients: to.map((addr) => ({ emailAddress: { address: addr } }))
   };

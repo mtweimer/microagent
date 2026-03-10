@@ -1,12 +1,19 @@
 #!/usr/bin/env node
-// @ts-nocheck
 import { runInteractive, buildRuntime } from "./cli/runtime.js";
 import { listProfiles, loadProfile, validateProfile } from "./core/profile.js";
 import { runBenchmarks } from "./bench/index.js";
 import { runSystemCheck } from "./core/check.js";
 import { parsePluginPathArg, validatePlugins } from "./core/pluginValidator.js";
+import type { AnyRecord } from "./core/contracts.js";
 
-function parseArg(flag, args) {
+const PROVIDERS = ["ollama", "openai", "azure-openai", "anthropic"] as const;
+type ProviderName = (typeof PROVIDERS)[number];
+
+function asRecord(value: unknown): AnyRecord {
+  return typeof value === "object" && value !== null ? (value as AnyRecord) : {};
+}
+
+function parseArg(flag: string, args: string[]): string | undefined {
   const idx = args.indexOf(flag);
   if (idx === -1) return undefined;
   return args[idx + 1];
@@ -25,19 +32,20 @@ async function main() {
   if (cmd === "doctor") {
     const profileName = parseArg("--profile", args) ?? "default";
     const runtime = await buildRuntime(profileName);
-    const providers = ["ollama", "openai", "azure-openai", "anthropic"];
     const health = [];
-    for (const p of providers) health.push(await runtime.modelGateway.healthCheck(p));
+    for (const p of PROVIDERS) health.push(await runtime.modelGateway.healthCheck(p));
 
     const profileCheck = validateProfile(runtime.profile);
 
-    let graph = {
-      enabled: runtime.graphState.enabled,
-      reason: runtime.graphState.reason ?? null,
+    let graph:
+      | { enabled: false; reason: string | null; tokenCached: boolean }
+      | { enabled: true; tenantId: string; scopes: string[]; tokenCached: boolean; expiresAt: number | null } = {
+      enabled: false,
+      reason: runtime.graphState.enabled ? null : runtime.graphState.reason ?? null,
       tokenCached: false
     };
 
-    if (runtime.graphState.enabled) {
+    if (runtime.graphState.enabled && runtime.graphState.client) {
       const token = runtime.graphState.client.auth.loadCache();
       graph = {
         enabled: true,
@@ -48,16 +56,18 @@ async function main() {
       };
     }
 
-    const composer = runtime.dispatcher?.composerConfig ?? {};
+    const composer = asRecord(runtime.dispatcher?.composerConfig);
     const primary = composer.primary ?? null;
     const fallback = composer.fallback ?? null;
     let primaryReady = false;
     let fallbackReady = false;
-    if (primary?.provider) {
-      primaryReady = runtime.modelGateway.checkAuth(primary.provider).ok;
+    const primaryRecord = asRecord(primary);
+    const fallbackRecord = asRecord(fallback);
+    if (typeof primaryRecord.provider === "string") {
+      primaryReady = runtime.modelGateway.checkAuth(primaryRecord.provider as ProviderName).ok;
     }
-    if (fallback?.provider) {
-      fallbackReady = runtime.modelGateway.checkAuth(fallback.provider).ok;
+    if (typeof fallbackRecord.provider === "string") {
+      fallbackReady = runtime.modelGateway.checkAuth(fallbackRecord.provider as ProviderName).ok;
     }
 
     console.log(JSON.stringify({
@@ -67,7 +77,10 @@ async function main() {
       profileValid: profileCheck,
       providers: health,
       graph,
-      memory: runtime.memory.stats ? runtime.memory.stats() : { backend: "inmemory" },
+      memory:
+        typeof (runtime.memory as { stats?: () => unknown }).stats === "function"
+          ? (runtime.memory as { stats: () => unknown }).stats()
+          : { backend: "inmemory" },
       cache: {
         enabled: runtime.profile.cache?.enabled !== false,
         grammarSystem: runtime.profile.cache?.grammarSystem ?? "completionBased",
