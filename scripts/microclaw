@@ -24,7 +24,7 @@ start_daemon() {
     echo "micro-claw already running (pid $(cat "$PID_FILE"))"
     return 0
   fi
-  nohup bash -lc "cd '$ROOT_DIR' && exec node '$ROOT_DIR/src/cli.js' run" >"$LOG_FILE" 2>&1 &
+  nohup bash -lc "cd '$ROOT_DIR' && exec npx tsx '$ROOT_DIR/src/cli.ts' run" >"$LOG_FILE" 2>&1 &
   local pid=$!
   echo "$pid" >"$PID_FILE"
   echo "micro-claw started in daemon mode (pid $pid)"
@@ -72,16 +72,16 @@ case "$CMD" in
   up)
     shift || true
     cd "$ROOT_DIR"
-    node "$ROOT_DIR/src/cli.js" doctor "$@"
-    exec node "$ROOT_DIR/src/cli.js" run "$@"
+    npx tsx "$ROOT_DIR/src/cli.ts" doctor "$@"
+    exec npx tsx "$ROOT_DIR/src/cli.ts" run "$@"
     ;;
   check)
     shift || true
     cd "$ROOT_DIR"
-    exec node "$ROOT_DIR/src/cli.js" check "$@"
+    exec npx tsx "$ROOT_DIR/src/cli.ts" check "$@"
     ;;
   build|rebuild)
-    (cd "$ROOT_DIR" && node scripts/build.js)
+    (cd "$ROOT_DIR" && npx tsx scripts/build.ts)
     ;;
   start)
     shift || true
@@ -89,7 +89,7 @@ case "$CMD" in
       start_daemon
     else
       cd "$ROOT_DIR"
-      exec node "$ROOT_DIR/src/cli.js" run "$@"
+      exec npx tsx "$ROOT_DIR/src/cli.ts" run "$@"
     fi
     ;;
   stop)
@@ -102,7 +102,7 @@ case "$CMD" in
       start_daemon
     else
       cd "$ROOT_DIR"
-      exec node "$ROOT_DIR/src/cli.js" run "$@"
+      exec npx tsx "$ROOT_DIR/src/cli.ts" run "$@"
     fi
     ;;
   status)
@@ -122,6 +122,6 @@ case "$CMD" in
     ;;
   *)
     cd "$ROOT_DIR"
-    exec node "$ROOT_DIR/src/cli.js" "$@"
+    exec npx tsx "$ROOT_DIR/src/cli.ts" "$@"
     ;;
 esac

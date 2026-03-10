@@ -36,7 +36,7 @@ start_daemon() {
     echo "micro-claw already running (pid $(cat "$PID_FILE"))"
     return 0
   fi
-  nohup bash -lc "cd '$ROOT_DIR' && exec node '$ROOT_DIR/src/cli.js' run" >"$LOG_FILE" 2>&1 &
+  nohup bash -lc "cd '$ROOT_DIR' && exec npx tsx '$ROOT_DIR/src/cli.ts' run" >"$LOG_FILE" 2>&1 &
   local pid=$!
   echo "$pid" >"$PID_FILE"
   echo "micro-claw started in daemon mode (pid $pid)"
@@ -46,7 +46,7 @@ start_daemon() {
 start_foreground() {
   ensure_node
   cd "$ROOT_DIR"
-  exec node "$ROOT_DIR/src/cli.js" run
+  exec npx tsx "$ROOT_DIR/src/cli.ts" run
 }
 
 stop_daemon() {
