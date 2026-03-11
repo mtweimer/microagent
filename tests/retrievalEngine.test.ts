@@ -73,6 +73,28 @@ test("retrieval planner narrows exact artifact lookups to artifact-heavy sources
   assert.equal(plan.sources.includes("narrative-memory"), false);
 });
 
+test("retrieval planner uses teams index for entity-only request prompts", () => {
+  const planner = new RetrievalPlanner();
+  const plan = planner.plan({
+    input: "what did Valeo want?",
+    routeDecision: {
+      mode: "chat",
+      domain: null,
+      actionHint: null,
+      confidence: 0.8,
+      needsClarification: false,
+      clarificationQuestion: null,
+      unsupportedReason: null
+    },
+    sessionRefs: createSessionRefs(),
+    retrievalConfig: {}
+  });
+
+  assert.equal(plan.intent, "exact");
+  assert.equal(plan.sources.includes("teams-index"), true);
+  assert.equal(plan.sources.includes("entity-graph"), true);
+});
+
 test("retrieval planner gives contextual reviews broader narrative/entity coverage", () => {
   const planner = new RetrievalPlanner();
   const plan = planner.plan({
@@ -189,6 +211,30 @@ test("ranker does not let cache outrank stronger exact evidence by default", () 
   };
   const ranked = ranker.rank(makePlan({ intent: "exact", query: "what did Valeo want?" }), [cached, strongMemory]).ranked;
   assert.equal(ranked[0]?.id, "memory-strong");
+});
+
+test("ranker penalizes prompt-echo memory turns for exact followups", () => {
+  const ranker = new Ranker();
+  const promptEcho: RetrievedEvidence = {
+    id: "memory-echo",
+    source: "structured-memory",
+    sourceType: "structured-memory",
+    title: "user turn",
+    snippet: "what did valeo want?",
+    timestamp: new Date().toISOString()
+  };
+  const exactArtifact: RetrievedEvidence = {
+    id: "teams-artifact",
+    source: "teams-index",
+    sourceType: "teams-index",
+    title: "Valeo request thread",
+    snippet: "Valeo asked for the latest testing timeline and blockers.",
+    entityRefs: ["Valeo"],
+    timestamp: new Date().toISOString(),
+    provenance: { externalId: "teams-1" }
+  };
+  const ranked = ranker.rank(makePlan({ intent: "exact", query: "what did Valeo want?" }), [promptEcho, exactArtifact]).ranked;
+  assert.equal(ranked[0]?.id, "teams-artifact");
 });
 
 test("ranker prefers fresher exact evidence for recent timeline prompts", () => {
@@ -375,4 +421,21 @@ test("retrieval engine can exclude current-turn assistant memory ids", async () 
     result.selectedEvidence.some((item) => item.id === `memory:${String(assistant.id)}`),
     false
   );
+});
+
+test("retrieval engine filters prompt-echo memory turns from exact lookups", async () => {
+  const memory = new StructuredTurnMemory();
+  memory.addTurn({ role: "user", text: "what did valeo want?", source: "cli" });
+  memory.addTurn({ role: "assistant", text: "You're asking what Valeo wanted. Can you clarify?", source: "dispatcher" });
+  memory.addTurn({ role: "user", text: "Valeo asked for the updated timeline and blockers.", source: "cli" });
+  const engine = new RetrievalEngine({
+    memory,
+    cache: new InMemoryTranslationCache(),
+    sessionRefs: createSessionRefs(),
+    retrievalConfig: {}
+  });
+
+  const result = await engine.retrieve({ input: "what did Valeo want?" });
+  assert.equal(result.selectedEvidence.some((item) => item.snippet.toLowerCase() === "what did valeo want?"), false);
+  assert.equal(result.selectedEvidence.some((item) => item.snippet.includes("updated timeline and blockers")), true);
 });

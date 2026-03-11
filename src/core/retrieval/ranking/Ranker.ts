@@ -78,6 +78,9 @@ function artifactSpecificityBoost(plan: RetrievalPlan, row: RetrievedEvidence): 
 function intentSourceBoost(plan: RetrievalPlan, row: RetrievedEvidence): number {
   const query = String(plan.query ?? "").toLowerCase();
   if (plan.intent === "timeline" && row.sourceType === "teams-index" && query.includes("teams")) return 0.5;
+  if (plan.intent === "timeline" && row.sourceType === "session-ref" && /\bmiss anything\b/.test(query) && query.includes("teams")) {
+    return -0.8;
+  }
   if (plan.intent === "timeline" && row.sourceType === "session-ref" && /\bmiss anything\b/.test(query)) return -0.35;
   if (row.sourceType === "cache" && /\b(again|repeat|same|previous|last time)\b/.test(query)) return 0.8;
   return 0;
@@ -131,6 +134,23 @@ function genericSummaryPenalty(plan: RetrievalPlan, row: RetrievedEvidence): num
   if ((plan.intent === "exact" || plan.intent === "lookup") && /\b(summary|reviewed|communications|notes)\b/.test(text)) {
     return -0.18;
   }
+  if (plan.intent === "timeline" && row.sourceType === "narrative-memory" && /\b(summary|reviewed|communications|notes)\b/.test(text)) {
+    return -0.12;
+  }
+  return 0;
+}
+
+function promptEchoPenalty(plan: RetrievalPlan, row: RetrievedEvidence): number {
+  if (row.sourceType !== "structured-memory") return 0;
+  const title = String(row.title ?? "").toLowerCase();
+  const snippet = String(row.snippet ?? "").toLowerCase().trim();
+  const query = String(plan.query ?? "").toLowerCase().trim();
+  if (!query) return 0;
+  if (title.includes("user turn") && snippet === query) return -1.5;
+  if (title.includes("user turn") && /\b(what did|what happened|what changed|should i respond|is that important)\b/.test(snippet)) {
+    return -0.85;
+  }
+  if (title.includes("assistant turn") && /^you(?:'|’)re asking\b/.test(String(row.snippet ?? ""))) return -1.25;
   return 0;
 }
 
@@ -149,7 +169,8 @@ export class Ranker {
           recency: recencyScore(plan, row.timestamp),
           source: sourceWeight(plan, row.sourceType),
           automationPenalty: automationPenalty(plan, row),
-          genericSummaryPenalty: genericSummaryPenalty(plan, row)
+          genericSummaryPenalty: genericSummaryPenalty(plan, row),
+          promptEchoPenalty: promptEchoPenalty(plan, row)
         };
         const score =
           breakdown.lexical +
@@ -161,7 +182,8 @@ export class Ranker {
           breakdown.recency +
           breakdown.source +
           breakdown.automationPenalty +
-          breakdown.genericSummaryPenalty;
+          breakdown.genericSummaryPenalty +
+          breakdown.promptEchoPenalty;
         scoreBreakdownById[row.id] = breakdown;
         return { ...row, score };
       })

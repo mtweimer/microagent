@@ -106,6 +106,71 @@ test("response composer teams review returns useful zero-result guidance", async
   assert.equal(out.evidence.some((e) => e.type === "teams_coverage"), true);
 });
 
+test("response composer teams review uses retrieval context when live scan is empty", async () => {
+  const out = await composeResponse({
+    input: "did i miss anything in teams today?",
+    actionEnvelope: makeEnvelope({ agent: "ms.teams", action: "review_my_day" }),
+    executionResult: makeExecutionResult({
+      message: "Reviewed 0 Teams message(s).",
+      artifacts: {
+        source: "me.chats.messages_fallback",
+        total: 0,
+        prioritized: [],
+        coverage: {
+          chatsScanned: 12,
+          chatMessagesScanned: 0,
+          channelsScanned: 20,
+          channelMessagesScanned: 73
+        },
+        limitations: []
+      }
+    }),
+    capabilityPack: { supportedDomains: [], supportedActions: {}, unsupportedKeywords: [], policy: "" },
+    modelGateway: null,
+    memoryRefs: [],
+    retrieval: {
+      plan: {
+        intent: "timeline",
+        query: "did i miss anything in teams today?",
+        entities: ["Valeo"],
+        sources: ["teams-index", "narrative-memory"],
+        traversalMode: "none",
+        maxItems: 6,
+        maxDepth: 1,
+        tokenBudget: 800
+      },
+      selectedEvidence: [],
+      overflowEvidence: [],
+      packs: {
+        answerPack: [
+          {
+            id: "teams-1",
+            source: "teams-index",
+            sourceType: "teams-index",
+            title: "Valeo blockers",
+            snippet: "Valeo asked for blockers and next steps."
+          }
+        ],
+        reasoningPack: [],
+        followupPack: []
+      },
+      trace: {
+        gatherers: ["teams-index"],
+        latencyMsByGatherer: {},
+        countsBySource: { "teams-index": 1 },
+        selectedIds: ["teams-1"],
+        overflowIds: [],
+        selectionReasonById: { "teams-1": "selected:within_budget" },
+        tokenContributionBySource: { "teams-index": 20 },
+        scoreBreakdownById: {}
+      }
+    }
+  });
+
+  assert.match(out.finalText, /strongest related context i found/i);
+  assert.match(out.finalText, /Valeo blockers/i);
+});
+
 test("response composer read email includes recommendation language", async () => {
   const out = await composeResponse({
     input: "should i respond?",
@@ -150,6 +215,57 @@ test("response composer read teams message includes recommendation language", as
   });
   assert.match(out.finalText, /Recommendation:/);
   assert.match(out.finalText, /likely worth a response/i);
+});
+
+test("response composer chat mode can answer retrieval-backed followups deterministically", async () => {
+  const out = await composeResponse({
+    input: "what did Valeo want?",
+    actionEnvelope: null,
+    executionResult: makeExecutionResult({ message: "" }),
+    capabilityPack: { supportedDomains: [], supportedActions: {}, unsupportedKeywords: [], policy: "" },
+    modelGateway: null,
+    memoryRefs: [],
+    retrieval: {
+      plan: {
+        intent: "exact",
+        query: "what did Valeo want?",
+        entities: ["Valeo"],
+        sources: ["structured-memory", "entity-graph"],
+        traversalMode: "none",
+        maxItems: 6,
+        maxDepth: 1,
+        tokenBudget: 800
+      },
+      selectedEvidence: [],
+      overflowEvidence: [],
+      packs: {
+        answerPack: [
+          {
+            id: "entity-1",
+            source: "entity-graph",
+            sourceType: "entity-graph",
+            title: "Valeo request",
+            snippet: "Valeo asked for a status update and next steps by end of day."
+          }
+        ],
+        reasoningPack: [],
+        followupPack: []
+      },
+      trace: {
+        gatherers: ["entity-graph"],
+        latencyMsByGatherer: {},
+        countsBySource: { "entity-graph": 1 },
+        selectedIds: ["entity-1"],
+        overflowIds: [],
+        selectionReasonById: { "entity-1": "selected:within_budget" },
+        tokenContributionBySource: { "entity-graph": 20 },
+        scoreBreakdownById: {}
+      }
+    }
+  });
+
+  assert.match(out.finalText, /strongest evidence suggests/i);
+  assert.match(out.finalText, /status update and next steps/i);
 });
 
 test("response composer teams search no-hit gives refinement guidance", async () => {

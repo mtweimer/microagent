@@ -93,6 +93,9 @@ function inferSources(
       if (outlookSignal || calendarSignal) sources.add("structured-memory");
       if (/\b(what|why|how)\b/.test(lower)) sources.add("structured-memory");
       if (!teamsSignal && !outlookSignal && !calendarSignal && entities.length > 0) sources.add("structured-memory");
+      if (!teamsSignal && entities.length > 0 && /\b(want|wanted|ask|asked|need|needed|request|requested)\b/.test(lower)) {
+        sources.add("teams-index");
+      }
       if (entities.length > 0) sources.add("entity-graph");
       if (cacheSignal && outlookSignal) sources.add("cache");
       break;

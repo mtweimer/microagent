@@ -65,6 +65,11 @@ function asDomainName(value: string | null): DomainName | null {
   return listDomains().includes(value as DomainName) ? (value as DomainName) : null;
 }
 
+function isConversationalRetrievalPrompt(input: string): boolean {
+  const lower = String(input ?? "").toLowerCase();
+  return /\b(what did|what happened|what changed|what was that|what about the latest one|latest one|should i respond|is that important|summarize what matters|did i miss anything)\b/.test(lower);
+}
+
 export class Dispatcher {
   agents: DispatcherDeps["agents"];
   memory: DispatcherDeps["memory"];
@@ -261,6 +266,9 @@ export class Dispatcher {
     }
 
     if (routeDecision.mode === "clarify") {
+      if (isConversationalRetrievalPrompt(input)) {
+        return this.composeGeneralChatResponse({ input, traceId, stageTimingsMs, markStart, markEnd });
+      }
       const requestId = `clarify-${Date.now()}`;
       const clarifyingQuestion =
         routeDecision.clarificationQuestion ??

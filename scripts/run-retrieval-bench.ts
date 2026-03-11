@@ -39,6 +39,13 @@ function createBenchTeamsIndex(): TeamsIndexLike {
       const query = String(options.query ?? "").toLowerCase();
       const messages = [];
       const fallbackMatches = [];
+      const coverage = {
+        chatsScanned: 6,
+        chatMessagesScanned: 0,
+        channelsScanned: 12,
+        channelMessagesScanned: 24,
+        totalCandidates: 24
+      };
       if (query.includes("valeo")) {
         messages.push({
           id: "teams-msg-valeo-1",
@@ -73,7 +80,12 @@ function createBenchTeamsIndex(): TeamsIndexLike {
           webUrl: "https://teams.example/ksm"
         });
       }
-      return { messages, fallbackMatches };
+      return {
+        messages,
+        fallbackMatches,
+        coverage,
+        limitations: messages.length === 0 ? ["getAllMessages unsupported in delegated context; used chat fallback"] : []
+      };
     }
   };
 }

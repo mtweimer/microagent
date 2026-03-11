@@ -39,6 +39,7 @@ interface TextBuildInput {
   actionEnvelope: ActionEnvelope | null;
   executionResult: AgentExecutionResult;
   suggestedActions: SuggestionWithSafe[];
+  retrieval?: RetrievalResult | null;
 }
 
 interface ChatComposeInput {
@@ -152,7 +153,8 @@ export async function composeResponse({
     input,
     actionEnvelope,
     executionResult,
-    suggestedActions: deterministicSuggestions
+    suggestedActions: deterministicSuggestions,
+    retrieval: retrievalContext
   });
 
   if (
@@ -176,6 +178,22 @@ export async function composeResponse({
   const requestedPrimary = asRecord(composerConfig?.primary);
   const requestedFallback = asRecord(composerConfig?.fallback);
   const enabled = composerConfig?.enabled !== false;
+  const retrievalText = isChat ? buildRetrievalBackedChatText(input, retrievalContext) : null;
+
+  if (isChat && retrievalText) {
+    return buildDeterministicResponse({
+      finalText: retrievalText,
+      suggestedActions: deterministicSuggestions,
+      executionResult,
+      actionEnvelope,
+      isChat: true,
+      memoryRefs,
+      modelGateway,
+      source: "retrieval_chat",
+      retrieval: retrievalContext
+    });
+  }
+
   if (!enabled || !modelGateway) {
     return buildDeterministicResponse({
       finalText: deterministicText,
@@ -432,7 +450,7 @@ function buildDeterministicText({ actionEnvelope, executionResult, suggestedActi
   return `${header}\nSuggested next actions:\n${lines.join("\n")}`;
 }
 
-function buildConversationalText({ actionEnvelope, executionResult, suggestedActions }: TextBuildInput): string {
+function buildConversationalText({ actionEnvelope, executionResult, suggestedActions, retrieval = null }: TextBuildInput): string {
   if (!actionEnvelope) return buildChatFallbackText();
   if (executionResult?.status !== "ok") {
     return `I couldn't complete ${actionEnvelope.agent}.${actionEnvelope.action}: ${executionResult?.message ?? "unknown error"}`;
@@ -510,7 +528,19 @@ function buildConversationalText({ actionEnvelope, executionResult, suggestedAct
 
     if (actionEnvelope.action === "review_my_day") {
       const total = Number(artifacts.total ?? rows.length ?? 0);
+      const retrievalRows = (retrieval?.packs.answerPack ?? [])
+        .filter((row) => row.sourceType === "teams-index" || row.sourceType === "narrative-memory" || row.sourceType === "entity-graph")
+        .slice(0, 3);
+      const retrievalBullets = retrievalRows
+        .map((row) => `- ${row.title ?? row.sourceType}: ${String(row.snippet ?? "").slice(0, 140)}`)
+        .join("\n");
       if (total === 0) {
+        if (retrievalRows.length > 0) {
+          return (
+            "The live Teams scan did not surface direct recent hits in the selected window, but the strongest related context I found was:\n" +
+            `${retrievalBullets}\n${coverageLine}${limitationsLine}`
+          );
+        }
         return (
           "I checked Teams and didn’t find any recent messages in your accessible scope for the selected window. " +
           coverageLine +
@@ -601,6 +631,37 @@ function buildConversationalText({ actionEnvelope, executionResult, suggestedAct
 
 function buildChatFallbackText() {
   return "I’m micro-claw. I can help with Outlook and Calendar workflows, memory recall, and planning. What should we work on?";
+}
+
+function buildRetrievalBackedChatText(input: string, retrieval: RetrievalResult | null): string | null {
+  const lower = String(input ?? "").toLowerCase();
+  const rows = retrieval?.packs.answerPack ?? [];
+  if (rows.length === 0) return null;
+  const top = rows[0];
+  const snippet = String(top?.snippet ?? "").replace(/\s+/g, " ").trim();
+  const title = String(top?.title ?? top?.sourceType ?? "item").trim();
+  if (!snippet && !title) return null;
+
+  if (/\bwhat did .+ want\b/.test(lower)) {
+    return `The strongest evidence suggests ${title}: ${snippet || "there is a linked request, but the detail is thin."}`;
+  }
+  if (/\bshould i respond\b|\bis that important\b/.test(lower)) {
+    const advice = assessArtifactIntent(null, asRecord(top?.raw));
+    const base = `The most relevant item is ${title}: ${snippet || "no preview available."}`;
+    if (!advice) return base;
+    return `${base}\nRecommendation: ${advice.summary}\nWhy: ${advice.why.join("; ")}`;
+  }
+  if (/\bwhat about the latest one\b|\bwhat was that about\b|\bwhat happened\b/.test(lower)) {
+    return `The latest relevant item I found is ${title}: ${snippet || "no preview available."}`;
+  }
+  if (/\bsummarize what matters\b|\bdid i miss anything\b|\bwhat changed\b/.test(lower)) {
+    const bullets = rows
+      .slice(0, 3)
+      .map((row) => `- ${row.title ?? row.sourceType}: ${String(row.snippet ?? "").slice(0, 140)}`)
+      .join("\n");
+    return `Here are the highest-signal items I found:\n${bullets}`;
+  }
+  return null;
 }
 
 function suggestNextActions(
