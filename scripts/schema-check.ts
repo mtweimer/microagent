@@ -10,7 +10,7 @@ function expected(shortName: string, domain: DomainName): string {
   const cfg = ACTION_REGISTRY[domain];
   return JSON.stringify(
     {
-      generatedFrom: "src/contracts/actionRegistry.js",
+      generatedFrom: "src/contracts/actionRegistry.ts",
       registryVersion: ACTION_REGISTRY_VERSION,
       domain,
       agentId: cfg.agentId,

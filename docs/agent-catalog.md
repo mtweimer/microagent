@@ -1,12 +1,13 @@
 # Agent Catalog and Organization
 
 This project now uses a TypeAgent-style package layout per domain agent:
+Source files are TypeScript-authored. Runtime imports may still use `.js` specifiers inside `.ts` files because the project is configured for Node ESM under `NodeNext`.
 
 - `src/agents/<domain>/manifest.json`
-- `src/agents/<domain>/actions/*.js`
-- `src/agents/<domain>/index.js`
-- `src/agents/<domain>/memory/*.js` (optional)
-- compatibility export in `src/agents/ms/*Agent.js`
+- `src/agents/<domain>/actions/*.ts`
+- `src/agents/<domain>/index.ts`
+- `src/agents/<domain>/memory/*.ts` (optional)
+- compatibility export in `src/agents/ms/*Agent.ts`
 
 ## Why this structure
 
@@ -29,7 +30,7 @@ Planned packages follow the same schema:
 
 ## Runtime catalog
 
-- Runtime agent bootstrap lives in `src/agents/catalog.js`.
+- Runtime agent bootstrap lives in `src/agents/catalog.ts`.
 - Agent loading is manifest-driven:
   - discovers `src/agents/*/manifest.json` (excluding `base` and `ms`)
   - dynamically imports each package `entry` (`./index.js` default)
@@ -43,7 +44,7 @@ Planned packages follow the same schema:
 Each plugin package directory should contain:
 
 1. `manifest.json`
-2. entry module (default `./index.js`)
+2. entry module (default `./index.js` at runtime; typically authored as `index.ts` in this repo)
 3. exported `createAgent()` or default class/factory that returns `{ id, canHandle, execute }`
 - `/capabilities` now returns:
   - capability pack (dispatcher-visible)

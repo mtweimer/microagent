@@ -1,5 +1,5 @@
 {
-  "generatedFrom": "src/contracts/actionRegistry.js",
+  "generatedFrom": "src/contracts/actionRegistry.ts",
   "registryVersion": "1.0.0",
   "domain": "calendar",
   "agentId": "ms.calendar",

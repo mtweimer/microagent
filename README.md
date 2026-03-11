@@ -2,6 +2,8 @@
 
 A minimal personal assistant agent project inspired by Microsoft TypeAgent.
 
+Source files in this repo are authored in TypeScript. You may still see `.js` import specifiers inside `.ts` files because the project uses Node ESM with TypeScript `NodeNext` resolution, which keeps source imports aligned with runtime module paths.
+
 Current implementation includes:
 - Structured CLI launch workflow (`run`, `doctor`, `check`, `profile`, `bench`)
 - Profile-driven runtime (`profiles/default.json`)

@@ -9,6 +9,7 @@ function readGenerated(shortName: string) {
   const p = path.resolve(process.cwd(), "src", "agents", "ms", `${shortName}.schema.generated.json`);
   const raw = fs.readFileSync(p, "utf8");
   return JSON.parse(raw) as {
+    generatedFrom: string;
     registryVersion: string;
     agentId: string;
     actions: unknown;
@@ -22,6 +23,7 @@ for (const domain of listDomains()) {
   if (!shortName) continue;
   test(`generated ${shortName} schema matches registry`, () => {
     const g = readGenerated(shortName);
+    assert.equal(g.generatedFrom, "src/contracts/actionRegistry.ts");
     assert.equal(g.registryVersion, ACTION_REGISTRY_VERSION);
     assert.equal(g.agentId, cfg.agentId);
     assert.deepEqual(g.actions, cfg.actions);

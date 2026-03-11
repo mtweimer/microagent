@@ -20,7 +20,7 @@ function generate(): string[] {
     const shortName = cfg.agentId.split(".").pop() ?? (domain as DomainName);
 
     const payload = {
-      generatedFrom: "src/contracts/actionRegistry.js",
+      generatedFrom: "src/contracts/actionRegistry.ts",
       registryVersion: ACTION_REGISTRY_VERSION,
       domain,
       agentId: cfg.agentId,
