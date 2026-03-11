@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { MemoryStore } from "./contracts.js";
-import type { AnyRecord, MemoryQueryHit, MemoryQueryResult, MemoryTurn } from "./contracts.js";
+import type { AnyRecord, MemoryQueryHit, MemoryQueryOptions, MemoryQueryResult, MemoryTurn } from "./contracts.js";
 
 interface MessageRow {
   id: number;
@@ -224,16 +224,17 @@ export class SQLiteStructuredMemory extends MemoryStore {
     };
   }
 
-  override query(naturalLanguageQuery: string, options: AnyRecord = {}): MemoryQueryResult {
+  override query(naturalLanguageQuery: string, options: MemoryQueryOptions = {}): MemoryQueryResult {
     this.initialize();
 
     const topK = typeof options.topK === "number" ? options.topK : 5;
+    const excluded = new Set((options.excludeIds ?? []).map((value) => String(value)));
     const terms = tokenize(naturalLanguageQuery);
     const raw = this.searchTermsStmt.all(JSON.stringify(terms), topK) as unknown as ScoreRow[];
 
     const results: MemoryQueryHit[] = raw.flatMap((r) => {
       const row = this.searchMessagesByIdsStmt.get(r.message_id) as MessageRow | undefined;
-      if (!row) return [];
+      if (!row || excluded.has(String(row.id))) return [];
       return [{
         id: row.id,
         role: row.role,
@@ -250,6 +251,7 @@ export class SQLiteStructuredMemory extends MemoryStore {
       for (const row of recent) {
         if (results.length >= topK) break;
         if (used.has(row.id)) continue;
+        if (excluded.has(String(row.id))) continue;
         results.push({
           id: row.id,
           role: row.role,

@@ -154,6 +154,7 @@ test("teams search_mentions returns mention-like messages", async () => {
 test("teams review_my_day falls back when getAllMessages is unsupported in delegated context", async () => {
   const calls: string[] = [];
   const agent = new TeamsAgent();
+  const recent = isoHoursAgo(6);
   const out = await agent.execute(
     makeEnvelope({
       requestId: "t4",
@@ -175,7 +176,7 @@ test("teams review_my_day falls back when getAllMessages is unsupported in deleg
           }
           if (path.startsWith("/me/chats/c1/messages")) {
             return {
-              value: [{ id: "x", bodyPreview: "urgent review needed", createdDateTime: "2026-03-04T00:00:00Z" }]
+              value: [{ id: "x", bodyPreview: "urgent review needed", createdDateTime: recent }]
             };
           }
           return { value: [] };

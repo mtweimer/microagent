@@ -12,6 +12,8 @@ import { decideRoute } from "./routerDecision.js";
 import { deriveRetrievalPlan } from "./retrievalPlan.js";
 import { assembleComposerMessages } from "./promptAssembler.js";
 import { resolveFollowupInput } from "./followupResolver.js";
+import { RetrievalEngine } from "./retrieval/engine/RetrievalEngine.js";
+import { buildTranslationCacheKey } from "./cacheKey.js";
 import {
   createSessionRefs,
   resolveOutlookReadParams,
@@ -28,6 +30,7 @@ import type {
   FollowupResolution,
   RouteDecision,
   SessionRefs,
+  RetrievalResult,
   TraceRecord,
   TranslationResult
 } from "./contracts.js";
@@ -62,6 +65,11 @@ function asDomainName(value: string | null): DomainName | null {
   return listDomains().includes(value as DomainName) ? (value as DomainName) : null;
 }
 
+function isConversationalRetrievalPrompt(input: string): boolean {
+  const lower = String(input ?? "").toLowerCase();
+  return /\b(what did|what happened|what changed|what was that|what about the latest one|latest one|should i respond|is that important|summarize what matters|did i miss anything)\b/.test(lower);
+}
+
 export class Dispatcher {
   agents: DispatcherDeps["agents"];
   memory: DispatcherDeps["memory"];
@@ -78,6 +86,7 @@ export class Dispatcher {
   personaOverlayManager: DispatcherDeps["personaOverlayManager"];
   cacheConfig: AnyRecord;
   composerConfig: AnyRecord;
+  retrievalConfig: AnyRecord;
   capabilityPack: ReturnType<typeof getCapabilityPack>;
   sessionRefs: SessionRefs;
 
@@ -96,7 +105,8 @@ export class Dispatcher {
     grammarStore,
     personaOverlayManager,
     cacheConfig,
-    composerConfig
+    composerConfig,
+    retrievalConfig
   }: DispatcherDeps) {
     this.agents = agents;
     this.memory = memory;
@@ -113,6 +123,7 @@ export class Dispatcher {
     this.personaOverlayManager = personaOverlayManager;
     this.cacheConfig = cacheConfig ?? { enabled: true, grammarSystem: "completionBased" };
     this.composerConfig = composerConfig ?? {};
+    this.retrievalConfig = this.normalizeRetrievalConfig(retrievalConfig);
     this.capabilityPack = getCapabilityPack();
     this.sessionRefs = createSessionRefs();
   }
@@ -140,7 +151,7 @@ export class Dispatcher {
     if (cached && cached.status === "ok") {
       this.sessionRefs = updateSessionRefsFromCached(this.sessionRefs, cached);
       markStart("memory_write_assistant");
-      this.memory.addTurn({ role: "assistant", text: JSON.stringify(cached), source: "cache" });
+      this.memory.addTurn({ role: "assistant", text: cached.finalText ?? cached.message, source: "cache" });
       markEnd("memory_write_assistant");
 
       return {
@@ -255,6 +266,9 @@ export class Dispatcher {
     }
 
     if (routeDecision.mode === "clarify") {
+      if (isConversationalRetrievalPrompt(input)) {
+        return this.composeGeneralChatResponse({ input, traceId, stageTimingsMs, markStart, markEnd });
+      }
       const requestId = `clarify-${Date.now()}`;
       const clarifyingQuestion =
         routeDecision.clarificationQuestion ??
@@ -455,19 +469,13 @@ export class Dispatcher {
       })
     };
 
-    if (response.status === "ok") {
-      markStart("cache_write");
-      this.cache.set(cacheKey, response);
-      markEnd("cache_write");
-    }
-
-    markStart("memory_write_assistant");
-    this.memory.addTurn({ role: "assistant", text: JSON.stringify(response), source: candidate.id });
-    markEnd("memory_write_assistant");
-
     markStart("compose_prompt");
-    const narrativeEntries = this.narrativeMemory ? this.narrativeMemory.summarize("today", 6) : [];
-    const memoryEvidence = this.memory.query(input, { topK: 5 }).results;
+    const retrieval = await this.buildRetrievalResult({
+      input,
+      routeDecision,
+      envelope: typed,
+      executionResult: result
+    });
     markEnd("compose_prompt");
 
     markStart("compose_model");
@@ -480,8 +488,7 @@ export class Dispatcher {
       capabilityPack: this.capabilityPack,
       modelGateway: this.modelGateway,
       composerConfig: this.composerConfig,
-      memoryEvidence,
-      narrativeEntries
+      retrieval
     });
     markEnd("compose_model");
 
@@ -493,6 +500,7 @@ export class Dispatcher {
     response.composer = composed.composer;
     response.router = routeDecision;
     response.capabilityGrounded = true;
+    response.retrieval = retrieval;
     response.retrievalPlan = deriveRetrievalPlan({
       input,
       routeDecision,
@@ -502,6 +510,11 @@ export class Dispatcher {
     if (response.retrievalPlan) {
       response.artifacts.retrievalPlan = response.retrievalPlan;
     }
+    response.artifacts.retrieval = retrieval;
+
+    markStart("memory_write_assistant");
+    this.memory.addTurn({ role: "assistant", text: response.finalText ?? response.message, source: candidate.id });
+    markEnd("memory_write_assistant");
 
     if (typed.agent === "ms.outlook" || typed.agent === "ms.calendar" || typed.agent === "ms.teams") {
       this.sessionRefs = updateSessionRefsFromExecution(this.sessionRefs, typed, result);
@@ -539,6 +552,12 @@ export class Dispatcher {
       });
     }
 
+    if (response.status === "ok") {
+      markStart("cache_write");
+      this.cache.set(cacheKey, response);
+      markEnd("cache_write");
+    }
+
     response.trace.stageTimingsMs = stageTimingsMs;
     return response;
   }
@@ -573,20 +592,34 @@ export class Dispatcher {
   getCacheKey(input: string): string {
     const provider = this.modelGateway?.getActiveProvider?.() ?? "none";
     const model = this.modelGateway?.getActiveModel?.(provider) ?? "none";
-    const composerVersion = "composer-v6";
-    const fingerprint = JSON.stringify({
-      strategy: this.composerConfig?.strategy ?? "hybrid_fallback",
-      primary: this.composerConfig?.primary ?? null,
-      fallback: this.composerConfig?.fallback ?? null
+    return buildTranslationCacheKey({
+      input,
+      provider,
+      model,
+      composerConfig: this.composerConfig
     });
-    return `${provider}::${model}::${getRegistryVersion()}::${composerVersion}::${fingerprint}::${input}`;
   }
 
   async composeGeneralChatResponse({ input, traceId, stageTimingsMs, markStart, markEnd }: ChatComposeInput): Promise<DispatcherResponse> {
     const requestId = `chat-${Date.now()}`;
     markStart("compose_prompt");
-    const narrativeEntries = this.narrativeMemory ? this.narrativeMemory.summarize("today", 6) : [];
-    const memoryEvidence = this.memory.query(input, { topK: 5 }).results;
+    const retrieval = await this.buildRetrievalResult({
+      input,
+      routeDecision: {
+        mode: "chat",
+        domain: null,
+        actionHint: null,
+        confidence: 0.8,
+        needsClarification: false,
+        clarificationQuestion: null,
+        unsupportedReason: null
+      },
+      envelope: null,
+      executionResult: {
+        status: "ok",
+        message: ""
+      }
+    });
     markEnd("compose_prompt");
 
     markStart("compose_model");
@@ -597,13 +630,12 @@ export class Dispatcher {
         status: "ok",
         message: ""
       },
-      memoryRefs: memoryEvidence.map((r) => r.id),
+      memoryRefs: retrieval.selectedEvidence.map((r) => r.id),
       personaContext: this.personaContext,
       capabilityPack: this.capabilityPack,
       modelGateway: this.modelGateway,
       composerConfig: this.composerConfig,
-      memoryEvidence,
-      narrativeEntries
+      retrieval
     });
     markEnd("compose_model");
 
@@ -620,6 +652,7 @@ export class Dispatcher {
       conversation: composed.conversation,
       conversationMode: "chat",
       composer: composed.composer,
+      retrieval,
       router: {
         mode: "chat",
         domain: null,
@@ -630,7 +663,7 @@ export class Dispatcher {
         unsupportedReason: null
       },
       capabilityGrounded: true,
-      memoryRefs: memoryEvidence.map((r) => r.id),
+      memoryRefs: retrieval.selectedEvidence.map((r) => r.id),
       trace: this.buildTrace({
         traceId,
         requestId,
@@ -677,8 +710,7 @@ export class Dispatcher {
       executionResult: { status: "ok", message: "" },
       personaContext: this.personaContext,
       capabilityPack: this.capabilityPack,
-      memoryEvidence: this.memory.query(input, { topK: 5 }).results,
-      narrativeEntries: this.narrativeMemory ? this.narrativeMemory.summarize("today", 6) : [],
+      retrieval: null,
       budget: this.composerConfig?.budget ?? {}
     });
     return {
@@ -686,6 +718,43 @@ export class Dispatcher {
       capabilityPack: this.capabilityPack,
       persona: this.personaContext,
       prompt: messages
+    };
+  }
+
+  async buildRetrievalResult({
+    input,
+    routeDecision,
+    envelope,
+    executionResult,
+    excludeMemoryIds = []
+  }: {
+    input: string;
+    routeDecision: RouteDecision | null;
+    envelope: ActionEnvelope | null;
+    executionResult: AgentExecutionResult | null;
+    excludeMemoryIds?: Array<string | number>;
+  }): Promise<RetrievalResult> {
+    const engine = new RetrievalEngine({
+      memory: this.memory,
+      cache: this.cache,
+      getCacheKey: (query: string) => this.getCacheKey(query),
+      sessionRefs: this.sessionRefs,
+      entityGraph: this.entityGraph ?? null,
+      teamsIndex: this.teamsIndex ?? null,
+      narrativeMemory: this.narrativeMemory ?? null,
+      retrievalConfig: this.retrievalConfig
+    });
+    return engine.retrieve({ input, routeDecision, envelope, executionResult, excludeMemoryIds });
+  }
+
+  normalizeRetrievalConfig(configuredValue: unknown): AnyRecord {
+    const configured = typeof configuredValue === "object" && configuredValue !== null
+      ? configuredValue
+      : {};
+    return {
+      maxItems: 10,
+      tokenBudget: 1800,
+      ...configured
     };
   }
 }

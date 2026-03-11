@@ -70,3 +70,35 @@ test("followup resolver maps review-driven thread question to latest review team
   assert.equal(out.envelope.action, "read_message");
   assert.equal(out.envelope.params.id, "teams-msg-1");
 });
+
+test("followup resolver maps latest-one prompts to latest teams message", () => {
+  const refs = makeSessionRefs();
+  refs.teams.lastMessageIds = ["teams-msg-latest"];
+  const out = resolveFollowupInput("what about the latest one?", refs);
+  assert.ok(out);
+  assert.equal(out.envelope.agent, "ms.teams");
+  assert.equal(out.envelope.action, "read_message");
+  assert.equal(out.envelope.params.id, "teams-msg-latest");
+});
+
+test("followup resolver maps entity-specific prompts to matching review artifacts", () => {
+  const refs = makeSessionRefs();
+  refs.review.lastTarget = "Valeo";
+  refs.review.lastItems = [
+    {
+      id: "r-valeo",
+      title: "Valeo status follow-up",
+      sourceDomain: "outlook",
+      sourceArtifactId: "email-valeo-1",
+      triageClass: "needs_response",
+      priority: "high",
+      rationale: "Valeo asked for next steps.",
+      evidence: []
+    }
+  ];
+  const out = resolveFollowupInput("what did Valeo want?", refs);
+  assert.ok(out);
+  assert.equal(out.envelope.agent, "ms.outlook");
+  assert.equal(out.envelope.action, "read_email");
+  assert.equal(out.envelope.params.id, "email-valeo-1");
+});

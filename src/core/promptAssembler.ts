@@ -1,5 +1,11 @@
 import { composePersonaInstructions, type PersonaContext } from "./personaContext.js";
-import type { ComposerMessage, CapabilityPack, ActionEnvelope, AgentExecutionResult } from "./contracts.js";
+import type {
+  ComposerMessage,
+  CapabilityPack,
+  ActionEnvelope,
+  AgentExecutionResult,
+  RetrievalResult
+} from "./contracts.js";
 
 interface BudgetConfig {
   baseChars?: number;
@@ -13,6 +19,7 @@ interface AssembleComposerInput {
   executionResult: AgentExecutionResult | { status: string; message: string } | null;
   personaContext?: PersonaContext | null | undefined;
   capabilityPack: CapabilityPack;
+  retrieval?: RetrievalResult | null;
   memoryEvidence?: unknown[];
   narrativeEntries?: unknown[];
   budget?: BudgetConfig;
@@ -22,6 +29,7 @@ interface AssembleChatInput {
   input: string;
   personaContext?: PersonaContext | null | undefined;
   capabilityPack: CapabilityPack;
+  retrieval?: RetrievalResult | null;
   memoryEvidence?: unknown[];
   narrativeEntries?: unknown[];
   budget?: BudgetConfig;
@@ -33,10 +41,20 @@ export function assembleComposerMessages({
   executionResult,
   personaContext,
   capabilityPack,
+  retrieval = null,
   memoryEvidence = [],
   narrativeEntries = [],
   budget = {}
 }: AssembleComposerInput): ComposerMessage[] {
+  const legacyRetrieval = retrieval ?? {
+    plan: null,
+    packs: {
+      answerPack: memoryEvidence.slice(0, 4),
+      reasoningPack: narrativeEntries.slice(0, 4),
+      followupPack: []
+    },
+    overflowEvidence: []
+  };
   const baseChars = budget.baseChars ?? 1600;
   const workspaceChars = budget.workspaceChars ?? 1800;
   const dynamicChars = budget.dynamicChars ?? 2800;
@@ -61,8 +79,10 @@ export function assembleComposerMessages({
         request: input,
         action: actionEnvelope ?? null,
         execution: executionResult ?? null,
-        memoryEvidence: memoryEvidence.slice(0, 8),
-        narrative: narrativeEntries.slice(0, 8)
+        retrievalPlan: legacyRetrieval.plan ?? null,
+        retrievalAnswerPack: legacyRetrieval.packs.answerPack ?? [],
+        retrievalReasoningPack: legacyRetrieval.packs.reasoningPack ?? [],
+        retrievalOverflowCount: legacyRetrieval.overflowEvidence.length ?? 0
       },
       null,
       2
@@ -117,10 +137,19 @@ export function assembleChatMessages({
   input,
   personaContext,
   capabilityPack,
+  retrieval = null,
   memoryEvidence = [],
   narrativeEntries = [],
   budget = {}
 }: AssembleChatInput): ComposerMessage[] {
+  const legacyRetrieval = retrieval ?? {
+    plan: null,
+    packs: {
+      answerPack: memoryEvidence.slice(0, 4),
+      reasoningPack: narrativeEntries.slice(0, 4),
+      followupPack: []
+    }
+  };
   const baseChars = budget.baseChars ?? 1600;
   const workspaceChars = budget.workspaceChars ?? 1800;
   const dynamicChars = budget.dynamicChars ?? 2800;
@@ -142,8 +171,9 @@ export function assembleChatMessages({
     JSON.stringify(
       {
         request: input,
-        recentMemory: memoryEvidence.slice(0, 8),
-        narrative: narrativeEntries.slice(0, 8)
+        retrievalPlan: legacyRetrieval.plan ?? null,
+        recentContext: legacyRetrieval.packs.answerPack ?? [],
+        supportingContext: legacyRetrieval.packs.reasoningPack ?? []
       },
       null,
       2

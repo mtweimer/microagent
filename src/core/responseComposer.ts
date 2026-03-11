@@ -10,8 +10,8 @@ import type {
   ComposerResult,
   ConversationBlock,
   EvidenceItem,
-  MemoryQueryHit,
   ModelGatewayLike,
+  RetrievalResult,
   RiskLevel,
   SuggestedAction
 } from "./contracts.js";
@@ -31,6 +31,7 @@ interface BuildDeterministicResponseInput {
   modelGateway: ModelGatewayLike | null;
   source: string;
   errors?: string[];
+  retrieval?: RetrievalResult | null;
 }
 
 interface TextBuildInput {
@@ -38,6 +39,7 @@ interface TextBuildInput {
   actionEnvelope: ActionEnvelope | null;
   executionResult: AgentExecutionResult;
   suggestedActions: SuggestionWithSafe[];
+  retrieval?: RetrievalResult | null;
 }
 
 interface ChatComposeInput {
@@ -45,8 +47,9 @@ interface ChatComposeInput {
   modelGateway: ModelGatewayLike;
   personaContext?: PersonaContext | null | undefined;
   capabilityPack: CapabilityPack;
-  memoryEvidence: MemoryQueryHit[];
-  narrativeEntries: AnyRecord[];
+  retrieval?: RetrievalResult | null;
+  memoryEvidence?: AnyRecord[];
+  narrativeEntries?: AnyRecord[];
   composerConfig?: AnyRecord;
 }
 
@@ -59,7 +62,8 @@ interface ComposeResponseInput {
   capabilityPack: CapabilityPack;
   modelGateway: ModelGatewayLike | null;
   composerConfig?: AnyRecord;
-  memoryEvidence?: MemoryQueryHit[];
+  retrieval?: RetrievalResult | null;
+  memoryEvidence?: AnyRecord[];
   narrativeEntries?: AnyRecord[];
 }
 
@@ -77,6 +81,58 @@ function asLooseRecord(value: unknown): Loose {
   return typeof value === "object" && value !== null ? value : {};
 }
 
+function coerceLegacyRetrieval(
+  retrieval: RetrievalResult | null,
+  memoryEvidence: AnyRecord[],
+  narrativeEntries: AnyRecord[]
+): RetrievalResult | null {
+  if (retrieval) return retrieval;
+  if (memoryEvidence.length === 0 && narrativeEntries.length === 0) return null;
+  return {
+    plan: {
+      intent: "contextual",
+      query: "",
+      entities: [],
+      sources: ["structured-memory", "narrative-memory"],
+      traversalMode: "none",
+      maxItems: 8,
+      maxDepth: 1,
+      tokenBudget: 1200
+    },
+    selectedEvidence: [],
+    overflowEvidence: [],
+    packs: {
+      answerPack: memoryEvidence.map((row, index) => ({
+        id: `legacy-memory:${index}`,
+        source: "legacy",
+        sourceType: "structured-memory",
+        title: typeof row.role === "string" ? `${row.role} turn` : "memory",
+        snippet: String(row.text ?? row.summary ?? ""),
+        raw: row
+      })),
+      reasoningPack: narrativeEntries.map((row, index) => ({
+        id: `legacy-narrative:${index}`,
+        source: "legacy",
+        sourceType: "narrative-memory",
+        title: typeof row.kind === "string" ? row.kind : "narrative",
+        snippet: String(row.text ?? row.summary ?? ""),
+        raw: row
+      })),
+      followupPack: []
+    },
+    trace: {
+      gatherers: ["legacy"],
+      latencyMsByGatherer: {},
+      countsBySource: {},
+      selectedIds: [],
+      overflowIds: [],
+      selectionReasonById: {},
+      tokenContributionBySource: {},
+      scoreBreakdownById: {}
+    }
+  };
+}
+
 export async function composeResponse({
   input,
   actionEnvelope,
@@ -86,16 +142,19 @@ export async function composeResponse({
   capabilityPack,
   modelGateway,
   composerConfig = {},
+  retrieval = null,
   memoryEvidence = [],
   narrativeEntries = []
 }: ComposeResponseInput): Promise<ComposerResult> {
+  const retrievalContext = coerceLegacyRetrieval(retrieval, memoryEvidence, narrativeEntries);
   const isChat = !actionEnvelope;
   const deterministicSuggestions = suggestNextActions(actionEnvelope, executionResult);
   const deterministicText = buildConversationalText({
     input,
     actionEnvelope,
     executionResult,
-    suggestedActions: deterministicSuggestions
+    suggestedActions: deterministicSuggestions,
+    retrieval: retrievalContext
   });
 
   if (
@@ -110,7 +169,8 @@ export async function composeResponse({
       isChat: false,
       memoryRefs,
       modelGateway,
-      source: "template_teams"
+      source: "template_teams",
+      retrieval: retrievalContext
     });
   }
 
@@ -118,6 +178,22 @@ export async function composeResponse({
   const requestedPrimary = asRecord(composerConfig?.primary);
   const requestedFallback = asRecord(composerConfig?.fallback);
   const enabled = composerConfig?.enabled !== false;
+  const retrievalText = isChat ? buildRetrievalBackedChatText(input, retrievalContext) : null;
+
+  if (isChat && retrievalText) {
+    return buildDeterministicResponse({
+      finalText: retrievalText,
+      suggestedActions: deterministicSuggestions,
+      executionResult,
+      actionEnvelope,
+      isChat: true,
+      memoryRefs,
+      modelGateway,
+      source: "retrieval_chat",
+      retrieval: retrievalContext
+    });
+  }
+
   if (!enabled || !modelGateway) {
     return buildDeterministicResponse({
       finalText: deterministicText,
@@ -127,7 +203,8 @@ export async function composeResponse({
       isChat,
       memoryRefs,
       modelGateway,
-      source: "template_disabled"
+      source: "template_disabled",
+      retrieval: retrievalContext
     });
   }
 
@@ -137,6 +214,7 @@ export async function composeResponse({
       modelGateway,
       personaContext,
       capabilityPack,
+      retrieval: retrievalContext,
       memoryEvidence,
       narrativeEntries,
       composerConfig
@@ -149,7 +227,8 @@ export async function composeResponse({
       isChat: true,
       memoryRefs,
       modelGateway,
-      source: chatText ? "llm_chat" : "template_chat_fallback"
+      source: chatText ? "llm_chat" : "template_chat_fallback",
+      retrieval: retrievalContext
     });
   }
 
@@ -159,6 +238,7 @@ export async function composeResponse({
     executionResult,
     personaContext,
     capabilityPack,
+    retrieval: retrievalContext,
     memoryEvidence,
     narrativeEntries,
     budget: composerConfig?.budget ?? {}
@@ -204,7 +284,8 @@ export async function composeResponse({
       memoryRefs,
       modelGateway,
       source: "template_fallback",
-      errors: composed.errors
+      errors: composed.errors,
+      retrieval: retrievalContext
     });
   }
 
@@ -242,7 +323,8 @@ export async function composeResponse({
       provider: modelGateway?.getActiveProvider?.() ?? "none",
       model: modelGateway?.getActiveModel?.() ?? "none",
       source: `llm_${composed.used}`
-    }
+    },
+    retrieval: retrievalContext
   };
 }
 
@@ -255,7 +337,8 @@ function buildDeterministicResponse({
   memoryRefs,
   modelGateway,
   source,
-  errors = []
+  errors = [],
+  retrieval = null
 }: BuildDeterministicResponseInput): ComposerResult {
   const evidence = isChat ? [] : buildDeterministicEvidence(actionEnvelope, executionResult);
   return {
@@ -276,7 +359,8 @@ function buildDeterministicResponse({
       model: modelGateway?.getActiveModel?.() ?? "none",
       source,
       errors
-    }
+    },
+    retrieval
   };
 }
 
@@ -366,7 +450,7 @@ function buildDeterministicText({ actionEnvelope, executionResult, suggestedActi
   return `${header}\nSuggested next actions:\n${lines.join("\n")}`;
 }
 
-function buildConversationalText({ actionEnvelope, executionResult, suggestedActions }: TextBuildInput): string {
+function buildConversationalText({ actionEnvelope, executionResult, suggestedActions, retrieval = null }: TextBuildInput): string {
   if (!actionEnvelope) return buildChatFallbackText();
   if (executionResult?.status !== "ok") {
     return `I couldn't complete ${actionEnvelope.agent}.${actionEnvelope.action}: ${executionResult?.message ?? "unknown error"}`;
@@ -444,7 +528,19 @@ function buildConversationalText({ actionEnvelope, executionResult, suggestedAct
 
     if (actionEnvelope.action === "review_my_day") {
       const total = Number(artifacts.total ?? rows.length ?? 0);
+      const retrievalRows = (retrieval?.packs.answerPack ?? [])
+        .filter((row) => row.sourceType === "teams-index" || row.sourceType === "narrative-memory" || row.sourceType === "entity-graph")
+        .slice(0, 3);
+      const retrievalBullets = retrievalRows
+        .map((row) => `- ${row.title ?? row.sourceType}: ${String(row.snippet ?? "").slice(0, 140)}`)
+        .join("\n");
       if (total === 0) {
+        if (retrievalRows.length > 0) {
+          return (
+            "The live Teams scan did not surface direct recent hits in the selected window, but the strongest related context I found was:\n" +
+            `${retrievalBullets}\n${coverageLine}${limitationsLine}`
+          );
+        }
         return (
           "I checked Teams and didn’t find any recent messages in your accessible scope for the selected window. " +
           coverageLine +
@@ -535,6 +631,37 @@ function buildConversationalText({ actionEnvelope, executionResult, suggestedAct
 
 function buildChatFallbackText() {
   return "I’m micro-claw. I can help with Outlook and Calendar workflows, memory recall, and planning. What should we work on?";
+}
+
+function buildRetrievalBackedChatText(input: string, retrieval: RetrievalResult | null): string | null {
+  const lower = String(input ?? "").toLowerCase();
+  const rows = retrieval?.packs.answerPack ?? [];
+  if (rows.length === 0) return null;
+  const top = rows[0];
+  const snippet = String(top?.snippet ?? "").replace(/\s+/g, " ").trim();
+  const title = String(top?.title ?? top?.sourceType ?? "item").trim();
+  if (!snippet && !title) return null;
+
+  if (/\bwhat did .+ want\b/.test(lower)) {
+    return `The strongest evidence suggests ${title}: ${snippet || "there is a linked request, but the detail is thin."}`;
+  }
+  if (/\bshould i respond\b|\bis that important\b/.test(lower)) {
+    const advice = assessArtifactIntent(null, asRecord(top?.raw));
+    const base = `The most relevant item is ${title}: ${snippet || "no preview available."}`;
+    if (!advice) return base;
+    return `${base}\nRecommendation: ${advice.summary}\nWhy: ${advice.why.join("; ")}`;
+  }
+  if (/\bwhat about the latest one\b|\bwhat was that about\b|\bwhat happened\b/.test(lower)) {
+    return `The latest relevant item I found is ${title}: ${snippet || "no preview available."}`;
+  }
+  if (/\bsummarize what matters\b|\bdid i miss anything\b|\bwhat changed\b/.test(lower)) {
+    const bullets = rows
+      .slice(0, 3)
+      .map((row) => `- ${row.title ?? row.sourceType}: ${String(row.snippet ?? "").slice(0, 140)}`)
+      .join("\n");
+    return `Here are the highest-signal items I found:\n${bullets}`;
+  }
+  return null;
 }
 
 function suggestNextActions(
@@ -883,8 +1010,7 @@ async function composeChatText({
   modelGateway,
   personaContext,
   capabilityPack,
-  memoryEvidence,
-  narrativeEntries,
+  retrieval,
   composerConfig
 }: ChatComposeInput): Promise<string | null> {
   try {
@@ -900,8 +1026,7 @@ async function composeChatText({
       input,
       personaContext,
       capabilityPack,
-      memoryEvidence,
-      narrativeEntries,
+      ...(retrieval !== undefined ? { retrieval } : {}),
       budget: composerConfig?.budget ?? {}
     });
     const text = (await modelGateway.completeText(messages, { provider, model })).trim();
